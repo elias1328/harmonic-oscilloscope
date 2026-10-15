@@ -203,7 +203,7 @@ export class AudioEngine {
       }
       try {
         v.panner.pan.setTargetAtTime(pan, t, 0.03);
-      } catch (e) {}
+      } catch { /* node already stopped or param not automatable */ }
     });
   }
 
@@ -216,11 +216,11 @@ export class AudioEngine {
         v.gain.gain.linearRampToValueAtTime(0, t + 0.03);
         setTimeout(() => {
           v.oscs.forEach(osc => {
-            try { osc.stop(); osc.disconnect(); } catch (e) {}
+            try { osc.stop(); osc.disconnect(); } catch { /* node already stopped or param not automatable */ }
           });
           v.gain.disconnect();
         }, 50);
-      } catch (e) {}
+      } catch { /* node already stopped or param not automatable */ }
     });
     this.voices = [];
   }
@@ -259,11 +259,11 @@ export class AudioEngine {
       v.oscs.forEach(osc => {
         try {
           osc.frequency.setTargetAtTime(oscFreq, t, 0.03);
-        } catch (e) {}
+        } catch { /* node already stopped or param not automatable */ }
       });
       try {
         v.gain.gain.setTargetAtTime(baseLevel, t, 0.03);
-      } catch (e) {}
+      } catch { /* node already stopped or param not automatable */ }
     });
   }
 

@@ -232,7 +232,7 @@ export class MediaImporter {
       try {
         this.audioSourceNode.stop();
         this.audioSourceNode.disconnect();
-      } catch (e) {}
+      } catch { /* node already stopped or param not automatable */ }
       this.audioSourceNode = null;
     }
   }
@@ -296,7 +296,7 @@ export class MediaImporter {
       try {
         voice.osc.stop();
         voice.osc.disconnect();
-      } catch (e) {}
+      } catch { /* node already stopped or param not automatable */ }
     }, 100);
 
     this.activeMidiVoices.delete(midiNum);
@@ -307,7 +307,7 @@ export class MediaImporter {
       try {
         voice.osc.stop();
         voice.osc.disconnect();
-      } catch (e) {}
+      } catch { /* node already stopped or param not automatable */ }
     });
     this.activeMidiVoices.clear();
   }

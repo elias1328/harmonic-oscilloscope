@@ -1,5 +1,9 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: './'
+  base: './',
+  test: {
+    include: ['tests/**/*.test.js'],
+    environment: 'node'
+  }
 });

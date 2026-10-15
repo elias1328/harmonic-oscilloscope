@@ -45,8 +45,7 @@ export class IntervalsGrid {
     });
   }
 
-  render(time) {
-    const dpr = window.devicePixelRatio || 1;
+  render() {
 
     this.canvases.forEach(({ canvas, ctx, item }) => {
       const w = canvas.width;

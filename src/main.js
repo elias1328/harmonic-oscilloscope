@@ -1,6 +1,6 @@
 // Main Orchestrator: Links Audio, 2D/3D Oscilloscopes, UI, Piano, and Intervals Grid
 
-import { CHORD_PRESETS, INTERVALS_SIMPLEST_FIRST, INTERVALS_BY_SEMITONE, identifyChordFromIntervals, NOTE_COLORS, NOTE_NAMES, noteNameToSemitone, simplifyRatio } from './math/harmonics.js';
+import { CHORD_PRESETS, INTERVALS_BY_SEMITONE, identifyChordFromIntervals, NOTE_COLORS, noteNameToSemitone } from './math/harmonics.js';
 import { AudioEngine } from './audio/audioEngine.js';
 import { MediaImporter } from './audio/mediaImporter.js';
 import { Oscilloscope2D } from './visualizer/oscilloscope2D.js';
@@ -651,7 +651,7 @@ function applyCustomRatio() {
   state.description = `Custom ratio ${parts.join(':')}. Cycles synchronize cleanly at multiples of the greatest common divisor.`;
 
   // Generate synthetic note names
-  state.notes = parts.map((p, idx) => `H${p}`);
+  state.notes = parts.map((p) => `H${p}`);
   state.colors = ['#ff5376', '#ff9f43', '#2ecc71', '#d980fa'].slice(0, parts.length);
 
   if (parts.length >= 3) {
@@ -999,9 +999,12 @@ function animate(currentTime) {
     const waveData = audio.getWaveformData();
     miniWaveform.render(waveData, state.colors[1] || '#ff9f43');
   } else {
-    intervalsGrid.render(state.time);
+    intervalsGrid.render();
   }
 }
+
+// Read-only debug handle used by the e2e suite (e2e/e2e.mjs) to inspect precise state.
+window.__harmonic = { state, audio, mediaImporter, visualizer3D };
 
 // Initial Boot
 handleResize();
