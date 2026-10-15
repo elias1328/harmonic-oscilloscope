@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Harmonic Oscilloscope Visualizer</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app-container">
+    <!-- Screen Header (Image 1, 3, 4, 5 style) -->
+    <header id="harmonic-header">
+      <div class="header-category" id="header-category">A RATIO OF</div>
+      <div class="header-title" id="header-title">3 : 2</div>
+      <div class="header-notes-badge" id="header-notes-badge">
+        <span style="color: #ff5376">C</span>
+        <span style="color: rgba(255,255,255,0.4)">+</span>
+        <span style="color: #ff9f43">G</span>
+      </div>
+    </header>
+
+    <!-- Top Right Nav -->
+    <nav id="top-nav">
+      <button class="nav-btn" id="btn-clear-redraw" title="Clear path and watch the figure be drawn in real time">🔄 Clear & Redraw</button>
+      <button class="nav-btn active" id="btn-draw-mode" title="Toggle between progressive live trace and full pre-rendered curve">✏️ Mode: Live Trace</button>
+      <button class="nav-btn active" id="btn-tab-lab">Oscilloscope Lab</button>
+      <button class="nav-btn" id="btn-tab-matrix">Simplest First Matrix</button>
+      <button class="nav-btn" id="btn-toggle-dimension">3D Mode</button>
+      <button class="nav-btn" id="btn-snapshot" title="Export high-resolution PNG snapshot">📸 Snapshot</button>
+    </nav>
+
+    <!-- Main Viewport for 2D & 3D Renderers -->
+    <main id="render-viewport">
+      <canvas id="canvas-2d"></canvas>
+      <div id="viewport-3d"></div>
+    </main>
+
+    <!-- 12-Interval Gallery View (Image 2) -->
+    <section id="intervals-grid-view"></section>
+
+    <!-- Floating Glass Controls Panel -->
+    <aside id="controls-panel">
+      <div class="panel-header">
+        <h3>HARMONIC CONTROLS</h3>
+        <button class="close-panel-btn" id="btn-collapse-panel">✕</button>
+      </div>
+
+      <!-- Frequency & Speed Slider (in Hertz) -->
+      <div class="control-group">
+        <div class="control-label">
+          <span>Frequency / Speed</span>
+          <span class="control-val" id="val-speed">261.6 Hz (Pitch)</span>
+        </div>
+        <input type="range" id="slider-speed" min="0" max="100" step="1" value="100" />
+        <div style="font-size: 11px; color: #8892b0; margin-top: 5px;">
+          💡 &lt; 20 Hz: Polyrhythmic clicks. 20–30 Hz: Clicks stop and fuse into tone! &gt; 30 Hz: Pure musical pitch.
+        </div>
+      </div>
+
+      <!-- Harmonic Physics & Context Card -->
+      <div class="control-group" id="harmonic-info-card">
+        <div class="control-label">
+          <span>Harmonic Physics</span>
+          <span class="control-val" id="info-consonance-badge">Perfect Consonance</span>
+        </div>
+        <div class="info-content-box">
+          <div class="info-freq-row" id="info-freq-breakdown">C: 261.6 Hz | G: 392.4 Hz</div>
+          <div class="info-explanation" id="info-description">Loading harmonic context...</div>
+          <div class="info-acoustic-status" id="info-acoustic-mode">Continuous Tone (> 30 Hz)</div>
+        </div>
+      </div>
+
+      <!-- Presets -->
+      <div class="control-group">
+        <div class="control-label">
+          <span>Harmonic Presets</span>
+        </div>
+        <div class="presets-grid" id="presets-container"></div>
+      </div>
+
+      <!-- Custom Ratio Input -->
+      <div class="control-group">
+        <div class="control-label">
+          <span>Custom Integer Ratio</span>
+        </div>
+        <div class="ratio-input-wrapper">
+          <input type="text" id="input-custom-ratio" placeholder="e.g. 4:5:6 or 16:17:18" />
+          <button id="btn-apply-ratio">Apply</button>
+        </div>
+      </div>
+
+      <!-- Interactive Clickable Piano Keyboard -->
+      <div class="control-group">
+        <div class="control-label">
+          <span>Interactive Piano Keyboard</span>
+          <button id="btn-clear-piano" style="background:none; border:none; color: #ff5376; font-size:11px; cursor:pointer;">Clear</button>
+        </div>
+        <div class="piano-container" id="piano-keyboard">
+          <!-- Dynamically generated keys -->
+        </div>
+      </div>
+
+      <!-- Phase Slider -->
+      <div class="control-group">
+        <div class="control-label">
+          <span>Phase Offset (φ)</span>
+          <span class="control-val" id="val-phase">0.00 rad</span>
+        </div>
+        <input type="range" id="slider-phase" min="0" max="6.283" step="0.05" value="0" />
+        <div style="font-size: 11px; color: #8892b0; margin-top: 5px; line-height: 1.4;">
+          💡 <strong>Phase Offset (φ):</strong> Shifts relative cycle timing. Visually rotates the figure like a 3D wireframe (0 = closed loop, π/2 = open curve). Acoustically, human ears are phase-deaf to isolated pitch (Ohm's Law), but phase shifts rhythmic click syncopation (&lt; 20 Hz) and creates audible stereo spatial widening!
+        </div>
+      </div>
+
+      <!-- Master Volume Slider -->
+      <div class="control-group">
+        <div class="control-label">
+          <span>Master Volume</span>
+          <span class="control-val" id="val-volume">60%</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 14px; color: var(--text-secondary);">🔈</span>
+          <input type="range" id="slider-volume" min="0" max="1" step="0.02" value="0.6" />
+          <span style="font-size: 14px; color: var(--text-secondary);">🔊</span>
+        </div>
+      </div>
+
+      <!-- Sound Engine Controls -->
+      <div class="control-group">
+        <div class="control-label">
+          <span>Audio Engine & Tuning</span>
+        </div>
+        <div class="btn-group" style="margin-bottom: 10px;">
+          <button class="btn-toggle active" id="btn-mute">🔊 Sound: ON</button>
+          <button class="btn-toggle active" id="btn-tuning" title="Toggle between Pure Ratios and Piano 12-TET">Just Intonation</button>
+        </div>
+        <div class="btn-group">
+          <button class="btn-toggle active" data-timbre="sine">Pure Sine</button>
+          <button class="btn-toggle" data-timbre="tube">Warm Tube</button>
+          <button class="btn-toggle" data-timbre="epiano">Soft E-Piano</button>
+        </div>
+      </div>
+    </aside>
+
+    <button id="panel-toggle" title="Open Controls">⚙️</button>
+
+    <!-- Bottom Waveform Strip -->
+    <div id="bottom-strip">
+      <div class="waveform-card">
+        <div class="waveform-label">Audio Oscilloscope Trace</div>
+        <canvas id="waveform-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
