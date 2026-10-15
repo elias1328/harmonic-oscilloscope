@@ -4,6 +4,15 @@
 import { Midi } from '@tonejs/midi';
 import { autoCorrelate, freqToMidi } from './pitchDetector.js';
 import { INTERVALS_BY_SEMITONE, identifyChordFromIntervals, NOTE_NAMES, NOTE_COLORS } from '../math/harmonics.js';
+import { parseHeaderSampleRate } from './audioFormats.js';
+
+// Largest clock step per frame (s): a backgrounded tab or a stall must not jump playback.
+export const MAX_FRAME_DT = 0.1;
+// Pitch detection (O(N²) autocorrelation) runs at most this often.
+const PITCH_INTERVAL_MS = 50;
+const MIDI_RELEASE = 0.08;
+
+const midiToHz = (midi) => 440 * Math.pow(2, (midi - 69) / 12);
 
 export class MediaImporter {
   constructor(audioEngine) {
@@ -25,20 +34,41 @@ export class MediaImporter {
     // MIDI specific state
     this.midiData = null;
     this.midiNotes = []; // Flat sorted array of { midi, name, time, duration, velocity }
-    this.activeMidiVoices = new Map(); // midiNote -> { osc, gain, stopTime }
+    this.activeMidiVoices = new Map(); // note instance -> voice (see AudioEngine.createVoice)
 
     // Audio specific state
     this.audioBuffer = null;
     this.audioSourceNode = null;
     this.audioStartTime = 0;
     this.audioStartOffset = 0;
-    this.audioMode = 'xy'; // 'xy' | 'harmonic'
+    this.audioMode = 'xy'; // 'xy' | 'pitch'
+    this.lastPitchTime = -Infinity;
+    this.lastPitchInfo = null;
   }
 
-  // Ensure AudioContext is ready
+  // Ensure the AudioContext exists. No side effects on the manual drone.
   get ctx() {
-    this.audioEngine.resume();
+    this.audioEngine.init();
     return this.audioEngine.ctx;
+  }
+
+  // Forget the current media (after a failed import, so nothing stale is left behind).
+  clearMedia() {
+    this.stopAudioSource();
+    this.stopMidiVoices();
+    this.isPlaying = false;
+    this.currentMedia = null;
+    this.currentTime = 0;
+    this.midiData = null;
+    this.midiNotes = [];
+    this.audioBuffer = null;
+    this.lastPitchInfo = null;
+  }
+
+  emitPlaybackUpdate() {
+    if (this.onPlaybackUpdate && this.currentMedia) {
+      this.onPlaybackUpdate(this.currentTime, this.currentMedia.duration, this.isPlaying);
+    }
   }
 
   // Load a file from File object or ArrayBuffer
@@ -100,6 +130,7 @@ export class MediaImporter {
       if (this.onLoaded) this.onLoaded(this.currentMedia);
       return this.currentMedia;
     } catch (err) {
+      this.clearMedia();
       console.error('Failed to parse MIDI file:', err);
       throw new Error('Could not parse MIDI file. Please check that it is a standard MIDI format.');
     }
@@ -111,6 +142,9 @@ export class MediaImporter {
   async loadAudioBuffer(arrayBuffer, name = 'Audio Track') {
     this.stop();
     try {
+      // decodeAudioData resamples to the context rate (and detaches the buffer): read the
+      // file's own rate from its header first.
+      const fileRate = parseHeaderSampleRate(arrayBuffer);
       const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
       this.audioBuffer = audioBuffer;
 
@@ -119,13 +153,16 @@ export class MediaImporter {
         name,
         duration: audioBuffer.duration,
         channels: audioBuffer.numberOfChannels,
-        sampleRate: audioBuffer.sampleRate
+        sampleRate: fileRate || audioBuffer.sampleRate,
+        sampleRateSource: fileRate ? 'file' : 'context'
       };
 
       this.currentTime = 0;
+      this.lastPitchInfo = null;
       if (this.onLoaded) this.onLoaded(this.currentMedia);
       return this.currentMedia;
     } catch (err) {
+      this.clearMedia();
       console.error('Failed to decode audio file:', err);
       throw new Error('Could not decode audio file. Please ensure it is a valid MP3, WAV, or OGG file.');
     }
@@ -136,15 +173,20 @@ export class MediaImporter {
   // ----------------------------------------------------
   play() {
     if (!this.currentMedia) return;
-    this.audioEngine.resume();
+    this.audioEngine.resumeContext();
 
     if (this.isPlaying) return;
+    // Play after the end of the track starts over
+    if (this.currentTime >= this.currentMedia.duration) {
+      this.currentTime = 0;
+    }
     this.isPlaying = true;
     this.lastClockTime = performance.now();
 
     if (this.currentMedia.type === 'audio') {
       this.startAudioSource(this.currentTime);
     }
+    this.emitPlaybackUpdate();
   }
 
   pause() {
@@ -155,6 +197,14 @@ export class MediaImporter {
       this.stopAudioSource();
     }
     this.stopMidiVoices();
+    this.emitPlaybackUpdate();
+  }
+
+  // End of track with loop off: park at the end, report the stopped state, notify.
+  handleEnded() {
+    this.currentTime = this.currentMedia.duration;
+    this.pause();
+    if (this.onEnded) this.onEnded();
   }
 
   stop() {
@@ -186,10 +236,16 @@ export class MediaImporter {
   }
 
   setPlaybackRate(rate) {
-    this.playbackRate = Math.max(0.25, Math.min(3.0, rate));
+    const newRate = Math.max(0.25, Math.min(3.0, rate));
     if (this.audioSourceNode && this.isPlaying) {
-      this.audioSourceNode.playbackRate.setValueAtTime(this.playbackRate, this.ctx.currentTime);
+      // Re-anchor the clock at the current position before the rate changes, otherwise the
+      // whole elapsed time since the start would be re-scaled by the new rate.
+      const now = this.ctx.currentTime;
+      this.audioStartOffset += (now - this.audioStartTime) * this.playbackRate;
+      this.audioStartTime = now;
+      this.audioSourceNode.playbackRate.setValueAtTime(newRate, now);
     }
+    this.playbackRate = newRate;
   }
 
   setLoop(loop) {
@@ -217,10 +273,12 @@ export class MediaImporter {
     this.audioStartTime = this.ctx.currentTime;
     this.audioStartOffset = offset;
 
-    this.audioSourceNode.onended = () => {
+    const source = this.audioSourceNode;
+    source.onended = () => {
+      // Ignore sources that were replaced (seek, rate change) or stopped by pause()
+      if (source !== this.audioSourceNode) return;
       if (!this.isLooping && this.isPlaying && this.currentTime >= this.currentMedia.duration - 0.1) {
-        this.isPlaying = false;
-        if (this.onEnded) this.onEnded();
+        this.handleEnded();
       }
     };
 
@@ -240,75 +298,26 @@ export class MediaImporter {
   // ----------------------------------------------------
   // MIDI SYNTHESIS & VOICE HANDLING
   // ----------------------------------------------------
+  // `note` is a note instance (not a pitch), so back-to-back notes of the same pitch retrigger.
   triggerMidiNoteOn(note) {
     if (!this.ctx || this.audioEngine.isMuted) return;
-    const freq = 440 * Math.pow(2, (note.midi - 69) / 12);
-    const t = this.ctx.currentTime;
-
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-
-    // Map timbre from audioEngine
-    const timbre = this.audioEngine.timbre || 'sine';
-    if (timbre === 'tube') {
-      osc.type = 'triangle';
-    } else if (timbre === 'epiano') {
-      osc.type = 'sawtooth';
-    } else {
-      osc.type = 'sine';
-    }
-
-    osc.frequency.setValueAtTime(freq, t);
-
-    // Velocity & Master Volume scaling
-    const vel = (note.velocity || 0.8);
-    const targetGain = 0.25 * vel * (this.audioEngine.volume || 0.6);
-
-    gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.linearRampToValueAtTime(targetGain, t + 0.015);
-
-    // Pan based on pitch for stereo immersion
-    const panner = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : null;
-    if (panner) {
-      const panVal = Math.max(-0.8, Math.min(0.8, (note.midi - 60) / 36));
-      panner.pan.setValueAtTime(panVal, t);
-      osc.connect(gain);
-      gain.connect(panner);
-      panner.connect(this.audioEngine.masterGain);
-    } else {
-      osc.connect(gain);
-      gain.connect(this.audioEngine.masterGain);
-    }
-
-    osc.start(t);
-    this.activeMidiVoices.set(note.midi, { osc, gain, panner });
+    // Same voice factory (and so the same timbres) as the manual drone. The master volume is
+    // applied once, by the engine's master gain.
+    const level = 0.25 * (note.velocity || 0.8);
+    const pan = Math.max(-0.8, Math.min(0.8, (note.midi - 60) / 36)); // pan by pitch
+    const voice = this.audioEngine.createVoice(midiToHz(note.midi), level, { pan, attack: 0.015 });
+    this.activeMidiVoices.set(note, voice);
   }
 
-  triggerMidiNoteOff(midiNum) {
-    const voice = this.activeMidiVoices.get(midiNum);
+  triggerMidiNoteOff(note) {
+    const voice = this.activeMidiVoices.get(note);
     if (!voice || !this.ctx) return;
-
-    const t = this.ctx.currentTime;
-    voice.gain.gain.cancelScheduledValues(t);
-    voice.gain.gain.linearRampToValueAtTime(0.0001, t + 0.08);
-
-    setTimeout(() => {
-      try {
-        voice.osc.stop();
-        voice.osc.disconnect();
-      } catch { /* node already stopped or param not automatable */ }
-    }, 100);
-
-    this.activeMidiVoices.delete(midiNum);
+    this.audioEngine.releaseVoice(voice, MIDI_RELEASE);
+    this.activeMidiVoices.delete(note);
   }
 
   stopMidiVoices() {
-    this.activeMidiVoices.forEach(voice => {
-      try {
-        voice.osc.stop();
-        voice.osc.disconnect();
-      } catch { /* node already stopped or param not automatable */ }
-    });
+    this.activeMidiVoices.forEach(voice => this.audioEngine.releaseVoice(voice, 0.015));
     this.activeMidiVoices.clear();
   }
 
@@ -319,7 +328,7 @@ export class MediaImporter {
     if (!this.currentMedia) return null;
 
     const now = performance.now();
-    const dt = (now - this.lastClockTime) * 0.001;
+    const dt = Math.min(MAX_FRAME_DT, Math.max(0, (now - this.lastClockTime) * 0.001));
     this.lastClockTime = now;
 
     if (this.isPlaying) {
@@ -333,8 +342,7 @@ export class MediaImporter {
               this.audioStartTime = this.ctx.currentTime;
               this.audioStartOffset = this.currentTime;
             } else {
-              this.currentTime = this.currentMedia.duration;
-              this.pause();
+              this.handleEnded();
             }
           }
         }
@@ -346,15 +354,12 @@ export class MediaImporter {
             this.currentTime = 0;
             this.stopMidiVoices();
           } else {
-            this.currentTime = this.currentMedia.duration;
-            this.pause();
+            this.handleEnded();
           }
         }
       }
 
-      if (this.onPlaybackUpdate) {
-        this.onPlaybackUpdate(this.currentTime, this.currentMedia.duration, this.isPlaying);
-      }
+      if (this.isPlaying) this.emitPlaybackUpdate();
     }
 
     // Process Frame Data based on media type
@@ -369,30 +374,30 @@ export class MediaImporter {
   processMidiFrame() {
     const t = this.currentTime;
     const active = [];
-    const activeMidiSet = new Set();
+    const activeSet = new Set();
 
     // Collect currently sounding notes
     for (let i = 0; i < this.midiNotes.length; i++) {
       const n = this.midiNotes[i];
       if (n.time <= t && t < n.time + n.duration) {
         active.push(n);
-        activeMidiSet.add(n.midi);
+        activeSet.add(n);
       }
       if (n.time > t + 2) break; // Optimization
     }
 
-    // Trigger synthesis noteOn/noteOff diffs during playback
+    // Trigger synthesis noteOn/noteOff diffs during playback, keyed by note instance
     if (this.isPlaying) {
-      // Note On for newly sounded notes
-      active.forEach(n => {
-        if (!this.activeMidiVoices.has(n.midi)) {
-          this.triggerMidiNoteOn(n);
+      // Note Off for finished notes (first, so a same-pitch successor retriggers cleanly)
+      this.activeMidiVoices.forEach((_, n) => {
+        if (!activeSet.has(n)) {
+          this.triggerMidiNoteOff(n);
         }
       });
-      // Note Off for finished notes
-      this.activeMidiVoices.forEach((_, midiNum) => {
-        if (!activeMidiSet.has(midiNum)) {
-          this.triggerMidiNoteOff(midiNum);
+      // Note On for newly sounded notes
+      active.forEach(n => {
+        if (!this.activeMidiVoices.has(n)) {
+          this.triggerMidiNoteOn(n);
         }
       });
     }
@@ -411,7 +416,8 @@ export class MediaImporter {
         title: 'SILENCE',
         consonance: 'Rest',
         description: 'Waiting for notes in MIDI score...',
-        colors: ['#8892b0']
+        colors: ['#8892b0'],
+        freqs: []
       };
     } else if (active.length === 1) {
       const note = active[0];
@@ -424,7 +430,8 @@ export class MediaImporter {
         title: '1 : 1',
         consonance: 'Pure Fundamental',
         description: `Single voice ${note.name} (${(440 * Math.pow(2, (note.midi - 69) / 12)).toFixed(1)} Hz). Single-axis linear oscillation.`,
-        colors: [NOTE_COLORS[note.pitchClass] || '#ff5376']
+        colors: [NOTE_COLORS[note.pitchClass] || '#ff5376'],
+        freqs: [midiToHz(note.midi)]
       };
     } else if (active.length === 2) {
       const n1 = active[0];
@@ -446,7 +453,8 @@ export class MediaImporter {
         title: `${intDef.ratio[0]} : ${intDef.ratio[1]}`,
         consonance: intDef.consonance,
         description: `${n2.name} completes ${intDef.ratio[0]} cycles for every ${intDef.ratio[1]} cycles of ${n1.name}.`,
-        colors: [NOTE_COLORS[n1.pitchClass] || '#ff5376', NOTE_COLORS[n2.pitchClass] || '#ff9f43']
+        colors: [NOTE_COLORS[n1.pitchClass] || '#ff5376', NOTE_COLORS[n2.pitchClass] || '#ff9f43'],
+        freqs: [midiToHz(n1.midi), midiToHz(n2.midi)]
       };
     } else {
       // 3 or more notes: Chord
@@ -464,7 +472,8 @@ export class MediaImporter {
         title: chord.title,
         consonance: chord.consonance,
         description: chord.description,
-        colors: uniquePitchClasses.map(p => NOTE_COLORS[p] || '#ff9f43')
+        colors: uniquePitchClasses.map(p => NOTE_COLORS[p] || '#ff9f43'),
+        freqs: uniquePitchClasses.map(p => midiToHz(active.find(n => n.pitchClass === p).midi))
       };
     }
 
@@ -504,19 +513,25 @@ export class MediaImporter {
       windowBuf[i] = x;
     }
 
-    // Real-time Pitch Detection on the window
+    // Real-time pitch detection: only in pitch mode, throttled to PITCH_INTERVAL_MS
     let pitchInfo = null;
-    const detectedHz = autoCorrelate(windowBuf, sampleRate);
-    if (detectedHz > 0) {
-      const noteData = freqToMidi(detectedHz);
-      if (noteData) {
-        pitchInfo = {
-          frequency: detectedHz,
-          note: noteData.pitchClass,
-          fullName: noteData.name,
-          cents: noteData.cents
-        };
+    if (this.audioMode === 'pitch') {
+      const now = performance.now();
+      if (now - this.lastPitchTime >= PITCH_INTERVAL_MS) {
+        this.lastPitchTime = now;
+        this.lastPitchInfo = null;
+        const detectedHz = autoCorrelate(windowBuf, sampleRate);
+        const noteData = detectedHz > 0 ? freqToMidi(detectedHz) : null;
+        if (noteData) {
+          this.lastPitchInfo = {
+            frequency: detectedHz,
+            note: noteData.pitchClass,
+            fullName: noteData.name,
+            cents: noteData.cents
+          };
+        }
       }
+      pitchInfo = this.lastPitchInfo;
     }
 
     const result = {
@@ -564,7 +579,7 @@ export class MediaImporter {
           pitchClass: NOTE_NAMES[midi % 12],
           octave: Math.floor(midi / 12) - 1,
           time: t,
-          duration: item.dur * 0.9,
+          duration: item.dur, // legato: no rest between steps
           velocity: 0.85
         });
       });
@@ -575,7 +590,7 @@ export class MediaImporter {
     this.midiNotes = demoNotes;
     this.currentMedia = {
       type: 'midi',
-      name: 'Demo: Harmonic Intervals Journey (Bach Style)',
+      name: 'Demo: Harmonic Intervals Journey',
       duration: t,
       bpm: 100,
       noteCount: demoNotes.length,

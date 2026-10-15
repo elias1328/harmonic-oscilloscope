@@ -38,7 +38,7 @@ describe('pitchDetector.js', () => {
 
   // Agent original documented the mismatch (asserted 'C#' and an undefined color).
   // Inverted here to assert the correct behaviour required by R21.
-  it.fails('R21: freqToMidi uses the app-wide flat naming (Db, not C#) so NOTE_COLORS lookups hit', () => {
+  it('R21: freqToMidi uses the app-wide flat naming (Db, not C#) so NOTE_COLORS lookups hit', () => {
     const pc = freqToMidi(277.18).pitchClass;
     assert.equal(pc, 'Db');
     assert.ok(NOTE_NAMES.includes(pc));

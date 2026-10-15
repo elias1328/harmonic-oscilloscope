@@ -1,17 +1,31 @@
 // Audio Engine: Real-time synthesis, Just Intonation vs 12-TET, Timbre shaping,
 // and the Pitch-to-Rhythm continuum (audio tones -> polyrhythmic clicks).
 
+// Continuous-tone gain multiplier for a root frequency: silent below 20 Hz (pure clicks),
+// linear crossfade 20-30 Hz (fusion zone), full above 30 Hz (musical pitch).
+export function toneGainForHz(hz) {
+  if (hz >= 30) return 1.0;
+  if (hz > 20) return (hz - 20) / 10.0;
+  return 0;
+}
+
+// Audible oscillator minimum is ~20 Hz
+const MIN_OSC_HZ = 20;
+const VOICE_ATTACK = 0.05;
+const VOICE_RELEASE = 0.03;
+
 export class AudioEngine {
   constructor() {
     this.ctx = null;
     this.masterGain = null;
     this.analyser = null;
-    this.voices = []; // Active oscillator/gain pairs
+    this.voices = []; // Active drone voices (see createVoice)
     this.isMuted = false;
     this.timbre = 'sine'; // 'sine' | 'tube' | 'epiano'
     this.tuning = 'just'; // 'just' | 'equal'
     this.baseFreq = 261.6256; // C4
-    this.speedMultiplier = 1.0;
+    this.currentHz = this.baseFreq; // current root frequency (speed slider)
+    this.droneEnabled = true; // false while MIDI/audio media owns the output
     this.volume = 0.6;
     this.polyrhythmPitches = [900, 600, 420, 1200]; // woodblock click frequencies for axes X, Y, Z, W
   }
@@ -31,11 +45,12 @@ export class AudioEngine {
     this.masterGain.connect(this.analyser);
     this.analyser.connect(this.ctx.destination);
 
-    if (this.currentNotes && this.voices.length === 0) {
+    if (this.droneEnabled && this.currentNotes && this.voices.length === 0) {
       this.refreshVoices();
     }
   }
 
+  // Unlock/resume the AudioContext. Restarts the drone only when it is enabled.
   resume() {
     if (!this.ctx) {
       this.init();
@@ -43,8 +58,30 @@ export class AudioEngine {
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
-    if (this.ctx && this.currentNotes && this.voices.length === 0) {
+    if (this.ctx && this.droneEnabled && this.currentNotes && this.voices.length === 0) {
       this.refreshVoices();
+    }
+  }
+
+  // Unlock/resume the AudioContext only (never touches the drone). Used by the media player.
+  resumeContext() {
+    if (!this.ctx) this.init();
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume();
+    }
+  }
+
+  // The manual drone is disabled while media (MIDI / audio files) plays, and re-enabled
+  // on eject or on any manual action (preset, piano, custom ratio, matrix card).
+  // Pass { rebuild: false } when the caller reconfigures the voices right after.
+  setDroneEnabled(enabled, { rebuild = true } = {}) {
+    if (this.droneEnabled === enabled) return;
+    this.droneEnabled = enabled;
+    if (!this.ctx) return;
+    if (enabled) {
+      if (rebuild) this.refreshVoices();
+    } else {
+      this.stopVoices();
     }
   }
 
@@ -55,7 +92,7 @@ export class AudioEngine {
     const t = this.ctx.currentTime;
     this.masterGain.gain.cancelScheduledValues(t);
     this.masterGain.gain.linearRampToValueAtTime(muted ? 0 : this.volume, t + 0.05);
-    if (!muted && this.voices.length === 0 && this.currentNotes) {
+    if (!muted && this.droneEnabled && this.voices.length === 0 && this.currentNotes) {
       this.refreshVoices();
     }
   }
@@ -77,6 +114,15 @@ export class AudioEngine {
     this.refreshVoices();
   }
 
+  // Set notes, tuning and root together with a single voice rebuild.
+  configure({ notes, tuning, rootHz }) {
+    if (notes) this.currentNotes = notes;
+    if (tuning) this.tuning = tuning;
+    if (rootHz !== undefined) this.currentHz = rootHz;
+    this.refreshVoices();
+    this.setRootFrequency(this.currentHz);
+  }
+
   // Create warm tube distortion curve
   createTubeDistortionCurve(k = 20) {
     const n_samples = 44100;
@@ -89,6 +135,12 @@ export class AudioEngine {
     return curve;
   }
 
+  // The tube curve never changes: build it once and share it between all voices.
+  getTubeCurve() {
+    if (!this.tubeCurve) this.tubeCurve = this.createTubeDistortionCurve(10);
+    return this.tubeCurve;
+  }
+
   // Set the current chord/interval frequencies
   setNotes(notesData) {
     // notesData: array of { name, semitones, justRatio }
@@ -96,89 +148,123 @@ export class AudioEngine {
     this.refreshVoices();
   }
 
+  noteFrequency(note, rootHz) {
+    if (this.tuning === 'just') {
+      return rootHz * (note.justRatio || 1);
+    }
+    // Equal temperament (12-TET)
+    return rootHz * Math.pow(2, (note.semitones || 0) / 12);
+  }
+
+  droneLevel() {
+    return (0.8 / Math.sqrt(this.currentNotes?.length || 1)) * toneGainForHz(this.currentHz);
+  }
+
+  // Voice factory shared by the drone and the MIDI synth, so a timbre sounds the same in both.
+  // Returns { oscs, gain, panner, nodes, baseFreq } where nodes are the extra internal nodes.
+  createVoice(freq, level, { pan = 0, attack = VOICE_ATTACK } = {}) {
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+
+    // Voice gain
+    const vGain = ctx.createGain();
+    vGain.gain.setValueAtTime(0, t);
+    vGain.gain.linearRampToValueAtTime(level, t + attack);
+
+    // Stereo spatial panner node for phase-acoustic modulation
+    const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    if (panner) {
+      panner.pan.setValueAtTime(pan, t);
+      vGain.connect(panner);
+      panner.connect(this.masterGain);
+    } else {
+      vGain.connect(this.masterGain);
+    }
+
+    const voice = { oscs: [], gain: vGain, panner, nodes: [], baseFreq: freq };
+
+    if (this.timbre === 'tube') {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+
+      const shaper = ctx.createWaveShaper();
+      shaper.curve = this.getTubeCurve();
+      shaper.oversample = '4x';
+
+      const lowpass = ctx.createBiquadFilter();
+      lowpass.type = 'lowpass';
+      lowpass.frequency.setValueAtTime(Math.min(freq * 4, 8000), t);
+
+      osc.connect(shaper);
+      shaper.connect(lowpass);
+      lowpass.connect(vGain);
+      osc.start(t);
+      voice.oscs.push(osc);
+      voice.nodes.push(shaper, lowpass);
+    } else if (this.timbre === 'epiano') {
+      // Fundamental + soft bell harmonic (3rd harmonic)
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const g2 = ctx.createGain();
+
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(freq, t);
+
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(freq * 3, t); // bell chime
+      g2.gain.setValueAtTime(0.15, t);
+
+      osc1.connect(vGain);
+      osc2.connect(g2);
+      g2.connect(vGain);
+
+      osc1.start(t);
+      osc2.start(t);
+      voice.oscs.push(osc1, osc2);
+      voice.nodes.push(g2);
+    } else {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      osc.connect(vGain);
+      osc.start(t);
+      voice.oscs.push(osc);
+    }
+    return voice;
+  }
+
+  // Fade a voice out, then stop and disconnect every node (panner included).
+  releaseVoice(voice, release = VOICE_RELEASE) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    try {
+      voice.gain.gain.cancelScheduledValues(t);
+      voice.gain.gain.linearRampToValueAtTime(0, t + release);
+    } catch { /* param not automatable */ }
+    setTimeout(() => {
+      voice.oscs.forEach(osc => {
+        try { osc.stop(); } catch { /* already stopped */ }
+        try { osc.disconnect(); } catch { /* already disconnected */ }
+      });
+      [...voice.nodes, voice.gain, voice.panner].forEach(n => {
+        if (!n) return;
+        try { n.disconnect(); } catch { /* already disconnected */ }
+      });
+    }, (release * 1000) + 20);
+  }
+
   refreshVoices() {
     if (!this.ctx || !this.currentNotes) return;
     this.stopVoices();
+    if (!this.droneEnabled) return;
 
-    const t = this.ctx.currentTime;
-    // Speed factor: if speedMultiplier < 0.1 (slow-mo), continuous tones fade out
-    // as polyrhythmic clicks take over
-    const isSubAudio = this.speedMultiplier < 0.15;
-    const voiceGainLevel = isSubAudio ? 0 : (0.8 / Math.sqrt(this.currentNotes.length || 1));
-
+    const level = this.droneLevel();
     this.currentNotes.forEach((note, idx) => {
-      let freq = this.baseFreq;
-      if (this.tuning === 'just') {
-        freq = this.baseFreq * (note.justRatio || 1);
-      } else {
-        // Equal temperament (12-TET)
-        freq = this.baseFreq * Math.pow(2, (note.semitones || 0) / 12);
-      }
-
-      // Voice gain
-      const vGain = this.ctx.createGain();
-      vGain.gain.setValueAtTime(0, t);
-      vGain.gain.linearRampToValueAtTime(voiceGainLevel, t + 0.05);
-
-      // Stereo spatial panner node for phase-acoustic modulation
-      const panner = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : null;
-      if (panner) {
-        vGain.connect(panner);
-        panner.connect(this.masterGain);
-      } else {
-        vGain.connect(this.masterGain);
-      }
-
-      const voiceObj = { oscs: [], gain: vGain, panner, baseFreq: freq, idx };
-
-      if (this.timbre === 'sine') {
-        const osc = this.ctx.createOscillator();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(freq, t);
-        osc.connect(vGain);
-        osc.start(t);
-        voiceObj.oscs.push(osc);
-      } else if (this.timbre === 'tube') {
-        const osc = this.ctx.createOscillator();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(freq, t);
-
-        const shaper = this.ctx.createWaveShaper();
-        shaper.curve = this.createTubeDistortionCurve(10);
-        shaper.oversample = '4x';
-
-        const lowpass = this.ctx.createBiquadFilter();
-        lowpass.type = 'lowpass';
-        lowpass.frequency.setValueAtTime(Math.min(freq * 4, 8000), t);
-
-        osc.connect(shaper);
-        shaper.connect(lowpass);
-        lowpass.connect(vGain);
-        osc.start(t);
-        voiceObj.oscs.push(osc);
-      } else if (this.timbre === 'epiano') {
-        // Fundamental + soft bell harmonic (3rd harmonic)
-        const osc1 = this.ctx.createOscillator();
-        const osc2 = this.ctx.createOscillator();
-        const g2 = this.ctx.createGain();
-
-        osc1.type = 'sine';
-        osc1.frequency.setValueAtTime(freq, t);
-
-        osc2.type = 'sine';
-        osc2.frequency.setValueAtTime(freq * 3, t); // bell chime
-        g2.gain.setValueAtTime(0.15, t);
-
-        osc1.connect(vGain);
-        osc2.connect(g2);
-        g2.connect(vGain);
-
-        osc1.start(t);
-        osc2.start(t);
-        voiceObj.oscs.push(osc1, osc2);
-      }
-
-      this.voices.push(voiceObj);
+      const freq = Math.max(MIN_OSC_HZ, this.noteFrequency(note, this.currentHz));
+      const voice = this.createVoice(freq, level);
+      voice.idx = idx;
+      this.voices.push(voice);
     });
 
     if (this.currentPhase !== undefined) {
@@ -209,19 +295,7 @@ export class AudioEngine {
 
   stopVoices() {
     if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    this.voices.forEach(v => {
-      try {
-        v.gain.gain.cancelScheduledValues(t);
-        v.gain.gain.linearRampToValueAtTime(0, t + 0.03);
-        setTimeout(() => {
-          v.oscs.forEach(osc => {
-            try { osc.stop(); osc.disconnect(); } catch { /* node already stopped or param not automatable */ }
-          });
-          v.gain.disconnect();
-        }, 50);
-      } catch { /* node already stopped or param not automatable */ }
-    });
+    this.voices.forEach(v => this.releaseVoice(v));
     this.voices = [];
   }
 
@@ -234,36 +308,22 @@ export class AudioEngine {
     // Below 20 Hz: pure polyrhythm clicks, continuous tone volume = 0
     // Between 20 and 30 Hz: crossfade (clicks fade out, continuous tone fades in)
     // Above 30 Hz: pure musical tone, clicks completely stopped
-    let toneGainMult = 0;
-    if (hz >= 30) {
-      toneGainMult = 1.0;
-    } else if (hz > 20) {
-      toneGainMult = (hz - 20) / 10.0; // 0.0 to 1.0
-    }
-
-    const baseLevel = (0.8 / Math.sqrt(this.currentNotes?.length || 1)) * toneGainMult;
+    const baseLevel = this.droneLevel();
 
     // Update voice frequencies and target gain
     this.voices.forEach((v, idx) => {
       const note = this.currentNotes[idx];
       if (!note) return;
-      let freq = hz;
-      if (this.tuning === 'just') {
-        freq = hz * (note.justRatio || 1);
-      } else {
-        freq = hz * Math.pow(2, (note.semitones || 0) / 12);
-      }
-
-      // Audible oscillator minimum is ~20 Hz
-      const oscFreq = Math.max(20, freq);
-      v.oscs.forEach(osc => {
+      const oscFreq = Math.max(MIN_OSC_HZ, this.noteFrequency(note, hz));
+      v.oscs.forEach((osc, i) => {
         try {
-          osc.frequency.setTargetAtTime(oscFreq, t, 0.03);
-        } catch { /* node already stopped or param not automatable */ }
+          // epiano's second oscillator is the 3rd harmonic
+          osc.frequency.setTargetAtTime(i === 0 ? oscFreq : oscFreq * 3, t, 0.03);
+        } catch { /* param not automatable */ }
       });
       try {
         v.gain.gain.setTargetAtTime(baseLevel, t, 0.03);
-      } catch { /* node already stopped or param not automatable */ }
+      } catch { /* param not automatable */ }
     });
   }
 

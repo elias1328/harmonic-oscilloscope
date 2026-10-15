@@ -99,7 +99,17 @@ export class FakeCtx {
     const dataBytes = v.getUint32(40, true);
     const frames = dataBytes / (channels * 2);
     const seconds = frames / fileRate;
-    return new FakeAudioBuffer(channels, Math.round(seconds * this.sampleRate), this.sampleRate);
+    const out = new FakeAudioBuffer(channels, Math.round(seconds * this.sampleRate), this.sampleRate);
+    const sample = (i, c) => (i < frames ? v.getInt16(44 + (i * channels + c) * 2, true) / 32767 : 0);
+    const step = fileRate / this.sampleRate;
+    for (let c = 0; c < channels; c++) {
+      const d = out.getChannelData(c);
+      for (let i = 0; i < out.length; i++) {
+        const x = i * step, i0 = Math.floor(x), f = x - i0;
+        d[i] = sample(i0, c) * (1 - f) + sample(i0 + 1, c) * f;
+      }
+    }
+    return out;
   }
   resume() { this.state = 'running'; return Promise.resolve(); }
 }

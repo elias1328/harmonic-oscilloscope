@@ -124,6 +124,14 @@ export class Oscilloscope3D {
     this.scene.add(this.curveGroup);
   }
 
+  // Restore every material X-Y vectorscope mode changes (core/glow/corona colours, tracer).
+  resetMaterials() {
+    this.coreMat.color.setHex(0xffffff);
+    this.glowMat.color.setHex(0xff9f43);
+    this.coronaMat.color.setHex(0xff9f43);
+    this.tracerGroup.visible = true;
+  }
+
   clearPath() {
     this.liveTrail = [];
     if (this.curveGeometry) {
@@ -344,10 +352,12 @@ export class Oscilloscope3D {
       this.coreMat.opacity = 0.98;
     }
 
-    // Dynamic color matching
+    // Dynamic color matching (and undo any X-Y vectorscope colouring of the core line)
     const primaryColor = notes.length > 1 ? (colors[1] || '#ff9f43') : (colors[0] || '#ff5376');
+    this.coreMat.color.setHex(0xffffff);
     this.glowMat.color.set(primaryColor);
     this.coronaMat.color.set(primaryColor);
+    this.tracerGroup.visible = true;
 
     this.renderer.render(this.scene, this.camera);
   }

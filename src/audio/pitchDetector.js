@@ -1,6 +1,8 @@
 // Real-time pitch detector using autocorrelation for audio files (MP3, WAV, etc.)
 // Accurately extracts fundamental frequencies and maps them to musical notes and harmonic ratios.
 
+import { NOTE_NAMES } from '../math/harmonics.js';
+
 export function autoCorrelate(buf, sampleRate) {
   const SIZE = buf.length;
   // Calculate RMS amplitude to avoid detecting noise
@@ -76,8 +78,7 @@ export function autoCorrelate(buf, sampleRate) {
   return -1;
 }
 
-// Map frequency to nearest MIDI note number and name
-const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+// Map frequency to nearest MIDI note number and name, using the app-wide (flat) note names
 
 export function freqToMidi(freq) {
   if (freq <= 0) return null;

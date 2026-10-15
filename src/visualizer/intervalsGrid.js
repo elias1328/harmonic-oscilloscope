@@ -1,6 +1,8 @@
 // 12-Interval "Simplest First" Matrix View (recreating Image 2)
 import { INTERVALS_SIMPLEST_FIRST } from '../math/harmonics.js';
 
+const CARD_CSS_SIZE = 180; // fallback when the grid is hidden (display: none) at build time
+
 export class IntervalsGrid {
   constructor(container, onSelectInterval) {
     this.container = container;
@@ -30,7 +32,7 @@ export class IntervalsGrid {
           <span class="note-badge" style="color: ${item.color}">${item.note}</span>
           <span class="ratio-text">${item.ratio[0]}:${item.ratio[1]}</span>
         </div>
-        <canvas class="card-canvas" width="180" height="180"></canvas>
+        <canvas class="card-canvas"></canvas>
       `;
 
       card.addEventListener('click', () => {
@@ -43,13 +45,22 @@ export class IntervalsGrid {
       const canvas = card.querySelector('canvas');
       this.canvases.push({ canvas, ctx: canvas.getContext('2d'), item });
     });
+    this.draw();
   }
 
-  render() {
+  // Draw every card once, at CSS size × devicePixelRatio. Called on build, on resize and
+  // when the matrix tab is shown — never per frame (the figures are static).
+  draw() {
+    const dpr = window.devicePixelRatio || 1;
 
     this.canvases.forEach(({ canvas, ctx, item }) => {
-      const w = canvas.width;
-      const h = canvas.height;
+      const css = canvas.clientWidth || CARD_CSS_SIZE;
+      canvas.width = Math.round(css * dpr);
+      canvas.height = Math.round(css * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const w = css;
+      const h = css;
       const cx = w * 0.5;
       const cy = h * 0.5;
       const radius = w * 0.40;
@@ -87,5 +98,9 @@ export class IntervalsGrid {
 
       ctx.restore();
     });
+  }
+
+  resize() {
+    this.draw();
   }
 }

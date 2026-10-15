@@ -5,7 +5,9 @@ import { spawn, spawnSync } from 'node:child_process';
 
 const PORT = 4179;
 const URL_ = `http://127.0.0.1:${PORT}/`;
-const extra = process.argv.slice(2);
+// Strict by default: any failing gate makes `npm run e2e` exit 1. `npm run e2e -- --no-strict` to only report.
+const args = process.argv.slice(2);
+const extra = args.includes('--no-strict') ? args.filter(a => a !== '--no-strict') : [...args, '--strict'];
 
 const run = (cmd, args) => {
   const r = spawnSync(cmd, args, { stdio: 'inherit' });

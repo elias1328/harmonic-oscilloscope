@@ -137,3 +137,35 @@ describe('Lissajous geometry (renderer formulas)', () => {
     assert.ok(gap < 1e-6);
   });
 });
+
+// ---------- Phase 1 ----------
+describe('Phase 1: harmonics helpers', async () => {
+  const { intervalNotes, pianoSelectionFromNotes, PIANO_KEY_NAMES } = await import('../src/math/harmonics.js');
+
+  it("R13: the Octave interval loads C + C' (not C + C)", () => {
+    const octave = INTERVALS_SIMPLEST_FIRST.find(i => i.name === 'Octave');
+    assert.deepEqual(intervalNotes(octave), ['C', "C'"]);
+    for (const i of INTERVALS_SIMPLEST_FIRST) {
+      const notes = intervalNotes(i);
+      assert.equal(new Set(notes).size, 2, i.name);
+      assert.equal(noteNameToSemitone(notes[1]) - noteNameToSemitone(notes[0]), i.semitones, i.name);
+    }
+  });
+
+  it('H: tritone text says 45/32 ≈ 1.406 is close to, but not equal to, √2', () => {
+    const t = INTERVALS_SIMPLEST_FIRST.find(i => i.name === 'Tritone');
+    assert.doesNotMatch(t.description, /exactly bisects/i);
+    assert.match(t.description, /1\.406/);
+    assert.match(t.description, /√2/);
+    assert.match(t.description, /not/i);
+  });
+
+  it('R22: piano selection is derived from the current voices', () => {
+    assert.deepEqual(pianoSelectionFromNotes(['C', 'E', 'G']), ['C', 'E', 'G']);
+    assert.deepEqual(pianoSelectionFromNotes(['H4', 'H5', 'H6']), [], 'custom ratios select no keys');
+    assert.deepEqual(pianoSelectionFromNotes(['C', 'E', 'G', 'C']), ['C', 'E', 'G'], 'duplicates collapse');
+    assert.deepEqual(pianoSelectionFromNotes(['C', "C'"]), ['C', "C'"]);
+    assert.deepEqual(pianoSelectionFromNotes([]), []);
+    assert.ok(PIANO_KEY_NAMES.includes("C'") && PIANO_KEY_NAMES.length === 13);
+  });
+});

@@ -1,8 +1,9 @@
 // Main Orchestrator: Links Audio, 2D/3D Oscilloscopes, UI, Piano, and Intervals Grid
 
-import { CHORD_PRESETS, INTERVALS_BY_SEMITONE, identifyChordFromIntervals, NOTE_COLORS, noteNameToSemitone } from './math/harmonics.js';
+import { CHORD_PRESETS, INTERVALS_BY_SEMITONE, identifyChordFromIntervals, NOTE_COLORS, noteNameToSemitone, intervalNotes, pianoSelectionFromNotes } from './math/harmonics.js';
 import { AudioEngine } from './audio/audioEngine.js';
-import { MediaImporter } from './audio/mediaImporter.js';
+import { MediaImporter, MAX_FRAME_DT } from './audio/mediaImporter.js';
+import { ACCEPT_ATTR, FORMATS_LABEL } from './audio/audioFormats.js';
 import { Oscilloscope2D } from './visualizer/oscilloscope2D.js';
 import { Oscilloscope3D } from './visualizer/oscilloscope3D.js';
 import { IntervalsGrid } from './visualizer/intervalsGrid.js';
@@ -33,7 +34,8 @@ const state = {
   mediaType: null, // 'midi' | 'audio'
   audioMode: 'xy', // 'xy' | 'pitch'
   xyPoints: null,
-  mediaInfo: null
+  mediaInfo: null,
+  freqOverride: null // real per-note Hz while media drives the header (MIDI notes, detected pitch)
 };
 
 // Initialize Audio Engine
@@ -69,6 +71,8 @@ const btnApplyRatio = document.getElementById('btn-apply-ratio');
 const pianoContainer = document.getElementById('piano-keyboard');
 const btnClearPiano = document.getElementById('btn-clear-piano');
 const waveformCanvas = document.getElementById('waveform-canvas');
+const appContainer = document.getElementById('app-container');
+const harmonicHeader = document.getElementById('harmonic-header');
 
 // Media Player & Importer Elements
 const mediaImporter = new MediaImporter(audio);
@@ -123,6 +127,27 @@ const intervalsGrid = new IntervalsGrid(intervalsGridEl, (selectedInterval) => {
   loadIntervalIntoLab(selectedInterval);
 });
 
+// Leave media mode (any manual action, eject, failed import): stop the player, hide the bar and
+// hand the output back to the manual drone. Callers rebuild the drone themselves via syncAudio().
+function exitMediaMode() {
+  if (!state.isMediaActive) return;
+  mediaImporter.pause();
+  state.isMediaActive = false;
+  state.mediaType = null;
+  state.xyPoints = null;
+  state.freqOverride = null;
+  if (mediaPlayerBar) mediaPlayerBar.classList.add('hidden');
+  appContainer.classList.remove('media-active');
+  visualizer3D.resetMaterials();
+  audio.setDroneEnabled(true, { rebuild: false });
+}
+
+// Frequency shown for voice idx: real media frequencies when known, else root × ratio.
+function noteFreq(idx) {
+  if (state.freqOverride && state.freqOverride[idx] !== undefined) return state.freqOverride[idx];
+  return state.rootHz * (state.ratios[idx] || 1);
+}
+
 // Setup Presets UI
 function buildPresetsUI() {
   presetsContainer.innerHTML = '';
@@ -138,12 +163,7 @@ function buildPresetsUI() {
 }
 
 function loadPreset(preset) {
-  if (state.isMediaActive) {
-    mediaImporter.pause();
-    state.isMediaActive = false;
-    state.xyPoints = null;
-    if (mediaPlayerBar) mediaPlayerBar.classList.add('hidden');
-  }
+  exitMediaMode();
 
   state.activePresetId = preset.id;
   state.category = preset.category;
@@ -174,10 +194,11 @@ function loadPreset(preset) {
 }
 
 function loadIntervalIntoLab(interval) {
+  exitMediaMode();
   state.activePresetId = null;
   state.category = 'A RATIO OF';
   state.title = `${interval.ratio[0]} : ${interval.ratio[1]}`;
-  state.notes = ['C', interval.note];
+  state.notes = intervalNotes(interval);
   state.ratios = [1, interval.ratio[0] / interval.ratio[1]];
   state.ratioInts = [interval.ratio[1], interval.ratio[0]];
   state.colors = ['#ff5376', interval.color];
@@ -202,6 +223,11 @@ function updateHeader() {
   headerCategory.textContent = state.category;
   headerTitle.textContent = state.title;
 
+  if (state.isMediaActive && state.mediaType === 'audio' && state.audioMode === 'xy') {
+    headerNotesBadge.innerHTML = '<span style="color: #2ecc71">L → X</span> <span style="color: rgba(255,255,255,0.4)">+</span> <span style="color: #a8ff78">R → Y</span>';
+    return;
+  }
+
   if (!state.notes || state.notes.length === 0) {
     headerNotesBadge.innerHTML = '<span style="color: rgba(255,255,255,0.4); font-size: 14px;">Select piano keys below to set root note and build harmony</span>';
     return;
@@ -209,8 +235,7 @@ function updateHeader() {
 
   headerNotesBadge.innerHTML = state.notes.map((note, idx) => {
     const color = state.colors[idx] || NOTE_COLORS[note] || '#fff';
-    const ratio = state.ratios[idx] || 1;
-    const freq = (state.rootHz * ratio).toFixed(1);
+    const freq = noteFreq(idx).toFixed(1);
     const plus = idx < state.notes.length - 1 ? '<span style="color: rgba(255,255,255,0.4)">+</span>' : '';
     return `<span style="color: ${color}">${note} <small style="font-size: 13px; opacity: 0.85;">(${freq} Hz)</small></span> ${plus}`;
   }).join(' ');
@@ -228,8 +253,7 @@ function updateHarmonicInfo() {
 
   if (infoFreqBreakdown) {
     const breakdown = state.notes.map((note, idx) => {
-      const ratio = state.ratios[idx] || 1;
-      const freq = (state.rootHz * ratio).toFixed(1);
+      const freq = noteFreq(idx).toFixed(1);
       return `${note}: ${freq} Hz`;
     }).join('  |  ');
     infoFreqBreakdown.textContent = breakdown;
@@ -266,13 +290,27 @@ function updatePresetsUI() {
   });
 }
 
+// Nav buttons hold an icon and a label (the label is hidden on phones; the title keeps it).
+function setNavButton(btn, icon, label) {
+  const ico = btn.querySelector('.nav-ico');
+  const lab = btn.querySelector('.nav-label');
+  if (ico && icon) ico.textContent = icon;
+  if (lab) lab.textContent = label; else btn.textContent = label;
+  btn.title = label;
+}
+
+function setPanelCollapsed(collapsed) {
+  controlsPanel.classList.toggle('collapsed', collapsed);
+  appContainer.classList.toggle('panel-collapsed', collapsed);
+}
+
 // 2D / 3D Dimension Switcher
 function setDimension(dim) {
   state.dimension = dim;
   if (dim === '3D') {
     canvas2D.style.display = 'none';
     viewport3D.style.display = 'block';
-    btnToggleDimension.textContent = '2D Mode';
+    setNavButton(btnToggleDimension, '🟦', '2D Mode');
     btnToggleDimension.classList.add('active');
     if (visualizer3D) {
       visualizer3D.resize(window.innerWidth, window.innerHeight);
@@ -280,7 +318,7 @@ function setDimension(dim) {
   } else {
     canvas2D.style.display = 'block';
     viewport3D.style.display = 'none';
-    btnToggleDimension.textContent = '3D Mode';
+    setNavButton(btnToggleDimension, '🧊', '3D Mode');
     btnToggleDimension.classList.remove('active');
     if (visualizer2D) {
       visualizer2D.resize(window.innerWidth, window.innerHeight);
@@ -289,10 +327,18 @@ function setDimension(dim) {
 }
 
 // Tab Switcher (Lab vs 12-Interval Grid)
+let panelAutoCollapsed = false;
 function setTab(tab) {
   state.currentTab = tab;
+  appContainer.classList.toggle('tab-matrix', tab === 'matrix');
   if (tab === 'matrix') {
+    // The panel would cover the first column of cards: tuck it away while the matrix is shown
+    if (!controlsPanel.classList.contains('collapsed')) {
+      setPanelCollapsed(true);
+      panelAutoCollapsed = true;
+    }
     intervalsGridEl.style.display = 'block';
+    intervalsGrid.resize(); // real card sizes are only known once the grid is visible
     document.getElementById('render-viewport').style.display = 'none';
     btnTabMatrix.classList.add('active');
     btnTabLab.classList.remove('active');
@@ -300,6 +346,10 @@ function setTab(tab) {
     headerTitle.style.display = 'none';
     headerNotesBadge.style.display = 'none';
   } else {
+    if (panelAutoCollapsed) {
+      setPanelCollapsed(false);
+      panelAutoCollapsed = false;
+    }
     intervalsGridEl.style.display = 'none';
     document.getElementById('render-viewport').style.display = 'block';
     btnTabLab.classList.add('active');
@@ -371,12 +421,7 @@ function buildPianoUI() {
 
 function togglePianoNote(noteName) {
   audio.resume();
-  if (state.isMediaActive) {
-    mediaImporter.pause();
-    state.isMediaActive = false;
-    state.xyPoints = null;
-    if (mediaPlayerBar) mediaPlayerBar.classList.add('hidden');
-  }
+  exitMediaMode();
   const idx = selectedPianoNotes.indexOf(noteName);
   if (idx > -1) {
     // Allow deselecting ANY note, including C!
@@ -394,6 +439,7 @@ function togglePianoNote(noteName) {
 }
 
 function clearAllNotes() {
+  exitMediaMode();
   selectedPianoNotes = [];
   state.activePresetId = null;
   state.notes = [];
@@ -471,8 +517,10 @@ function reconstructFromPiano() {
   updateHarmonicInfo();
 }
 
+// The piano selection is always derived from the current voices (presets, piano, custom
+// ratios, matrix cards, MIDI), so the next key click builds on what is actually sounding.
 function updatePianoSelection() {
-  selectedPianoNotes = [...state.notes];
+  selectedPianoNotes = pianoSelectionFromNotes(state.notes);
   const keys = pianoContainer.querySelectorAll('.piano-key-white, .piano-key-black');
   keys.forEach(k => {
     if (selectedPianoNotes.includes(k.dataset.note)) {
@@ -491,9 +539,8 @@ function syncAudio() {
     return { name, semitones, justRatio };
   });
 
-  audio.setNotes(notesData);
-  audio.setTuning(state.tuning);
-  audio.setRootFrequency(state.rootHz);
+  // One rebuild for notes + tuning + root
+  audio.configure({ notes: notesData, tuning: state.tuning, rootHz: state.rootHz });
 }
 
 // Frequency / Speed Slider listener
@@ -606,11 +653,11 @@ btnClearRedraw.addEventListener('click', () => {
 btnDrawMode.addEventListener('click', () => {
   if (state.drawMode === 'live') {
     state.drawMode = 'full';
-    btnDrawMode.textContent = '⭕ Mode: Full Loop';
+    setNavButton(btnDrawMode, '⭕', 'Mode: Full Loop');
     btnDrawMode.classList.remove('active');
   } else {
     state.drawMode = 'live';
-    btnDrawMode.textContent = '✏️ Mode: Live Trace';
+    setNavButton(btnDrawMode, '✏️', 'Mode: Live Trace');
     btnDrawMode.classList.add('active');
     state.time = 0;
     visualizer2D.clearPath();
@@ -629,17 +676,12 @@ inputCustomRatio.addEventListener('keydown', (e) => {
 
 function applyCustomRatio() {
   audio.resume();
-  if (state.isMediaActive) {
-    mediaImporter.pause();
-    state.isMediaActive = false;
-    state.xyPoints = null;
-    if (mediaPlayerBar) mediaPlayerBar.classList.add('hidden');
-  }
   const raw = inputCustomRatio.value.trim();
   if (!raw) return;
 
   const parts = raw.split(/[:\s,]+/).map(p => parseFloat(p)).filter(p => !isNaN(p) && p > 0);
   if (parts.length < 2) return;
+  exitMediaMode();
 
   const base = parts[0];
   state.ratioInts = parts;
@@ -667,6 +709,7 @@ function applyCustomRatio() {
   updateHeader();
   syncAudio();
   updatePresetsUI();
+  updatePianoSelection();
   updateHarmonicInfo();
 }
 
@@ -675,11 +718,13 @@ btnClearPiano.addEventListener('click', () => {
 });
 
 btnCollapsePanel.addEventListener('click', () => {
-  controlsPanel.classList.add('collapsed');
+  setPanelCollapsed(true);
+  panelAutoCollapsed = false;
 });
 
 panelToggle.addEventListener('click', () => {
-  controlsPanel.classList.remove('collapsed');
+  setPanelCollapsed(false);
+  panelAutoCollapsed = false;
 });
 
 // High-Resolution Snapshot export
@@ -707,22 +752,49 @@ function formatTime(sec) {
   return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
+function resetPlayerInfo() {
+  if (playerTrackTitle) playerTrackTitle.textContent = 'No Track Loaded';
+  if (playerTrackMeta) playerTrackMeta.textContent = 'MIDI / Audio';
+}
+
 async function loadMediaFile(file) {
   audio.resume();
   try {
     await mediaImporter.loadFile(file);
   } catch (err) {
+    // The importer has dropped the previous track: leave media mode and clear the stale title
+    if (state.isMediaActive) ejectMedia();
+    resetPlayerInfo();
     alert(err.message || 'Error loading media file');
   }
 }
 
 function ejectMedia() {
   mediaImporter.stop();
-  state.isMediaActive = false;
-  state.mediaType = null;
-  state.xyPoints = null;
-  if (mediaPlayerBar) mediaPlayerBar.classList.add('hidden');
+  exitMediaMode();
   loadPreset(CHORD_PRESETS[0]);
+}
+
+// Last values written to the DOM by the media callbacks (they run every frame: only write on change)
+const shown = { mediaKey: null, time: null, total: null, icon: null };
+let scrubbing = false;
+
+function setPlayIcon(isPlaying) {
+  const icon = isPlaying ? '⏸' : '▶';
+  if (btnPlayerPlay && shown.icon !== icon) {
+    btnPlayerPlay.textContent = icon;
+    shown.icon = icon;
+  }
+}
+
+// Apply a media-driven header/voice state, touching the DOM only when the displayed value changes.
+function applyMediaState(key, patch) {
+  if (shown.mediaKey === key) return;
+  shown.mediaKey = key;
+  Object.assign(state, patch);
+  updateHeader();
+  updateHarmonicInfo();
+  updatePianoSelection();
 }
 
 // MediaImporter Callbacks
@@ -732,6 +804,10 @@ mediaImporter.onLoaded = (info) => {
   state.mediaInfo = info;
   if (mediaPlayerBar) mediaPlayerBar.classList.remove('hidden');
 
+  appContainer.classList.add('media-active');
+  shown.mediaKey = null;
+  shown.time = null;
+  shown.total = null;
   if (playerTrackIcon) playerTrackIcon.textContent = info.type === 'midi' ? '🎹' : '🎵';
   if (playerTrackTitle) playerTrackTitle.textContent = info.name;
   if (playerTrackMeta) {
@@ -740,57 +816,57 @@ mediaImporter.onLoaded = (info) => {
       if (playerAudioModeSelector) playerAudioModeSelector.style.display = 'none';
       state.audioMode = 'midi';
     } else {
-      playerTrackMeta.textContent = `Audio • ${info.channels} Channel(s) • ${(info.sampleRate / 1000).toFixed(1)} kHz`;
+      const rateLabel = info.sampleRateSource === 'context' ? ' (context rate)' : '';
+      playerTrackMeta.textContent = `Audio • ${info.channels} Channel(s) • ${(info.sampleRate / 1000).toFixed(1)} kHz${rateLabel}`;
       if (playerAudioModeSelector) playerAudioModeSelector.style.display = 'flex';
       state.audioMode = 'xy';
+      mediaImporter.audioMode = 'xy';
       if (btnAudioModeXy) btnAudioModeXy.classList.add('active');
       if (btnAudioModePitch) btnAudioModePitch.classList.remove('active');
     }
   }
 
-  if (playerTimeCurrent) playerTimeCurrent.textContent = '00:00';
-  if (playerTimeTotal) playerTimeTotal.textContent = formatTime(info.duration);
   if (playerScrubber) playerScrubber.value = 0;
-  if (btnPlayerPlay) btnPlayerPlay.textContent = '⏸';
 
-  // Stop manual drone voices while media plays
-  audio.stopVoices();
+  // The media owns the output: silence the manual drone until eject / a manual action
+  audio.setDroneEnabled(false);
   mediaImporter.play();
 };
 
 mediaImporter.onPlaybackUpdate = (current, total, isPlaying) => {
-  if (playerTimeCurrent) playerTimeCurrent.textContent = formatTime(current);
-  if (playerTimeTotal) playerTimeTotal.textContent = formatTime(total);
-  if (playerScrubber && total > 0) {
+  const timeText = formatTime(current);
+  const totalText = formatTime(total);
+  if (playerTimeCurrent && shown.time !== timeText && !scrubbing) {
+    playerTimeCurrent.textContent = timeText;
+    shown.time = timeText;
+  }
+  if (playerTimeTotal && shown.total !== totalText) {
+    playerTimeTotal.textContent = totalText;
+    shown.total = totalText;
+  }
+  if (playerScrubber && total > 0 && !scrubbing) {
     playerScrubber.value = (current / total) * 100;
   }
-  if (btnPlayerPlay) btnPlayerPlay.textContent = isPlaying ? '⏸' : '▶';
+  setPlayIcon(isPlaying);
 };
+
+mediaImporter.onEnded = () => setPlayIcon(false);
 
 mediaImporter.onMidiStateChange = (activeNotes, ratioInfo) => {
   if (!state.isMediaActive || state.mediaType !== 'midi' || !ratioInfo) return;
 
-  state.category = ratioInfo.category;
-  state.title = ratioInfo.title;
-  state.notes = [...ratioInfo.notes];
-  state.ratioInts = [...ratioInfo.ratioInts];
-  state.ratios = [...ratioInfo.ratios];
-  state.colors = [...ratioInfo.colors];
-  state.consonance = ratioInfo.consonance;
-  state.description = ratioInfo.description;
-
-  updateHeader();
-  updateHarmonicInfo();
-
-  // Highlight active notes on interactive piano keyboard
-  const activeNames = activeNotes.map(n => n.pitchClass);
-  const keys = pianoContainer.querySelectorAll('.piano-key-white, .piano-key-black');
-  keys.forEach(k => {
-    if (activeNames.includes(k.dataset.note)) {
-      k.classList.add('active');
-    } else {
-      k.classList.remove('active');
-    }
+  const freqs = ratioInfo.freqs || [];
+  const key = `midi|${ratioInfo.category}|${ratioInfo.title}|${ratioInfo.notes.join(',')}|${freqs.map(f => f.toFixed(1)).join(',')}`;
+  applyMediaState(key, {
+    category: ratioInfo.category,
+    title: ratioInfo.title,
+    notes: [...ratioInfo.notes],
+    ratioInts: [...ratioInfo.ratioInts],
+    ratios: [...ratioInfo.ratios],
+    colors: [...ratioInfo.colors],
+    consonance: ratioInfo.consonance,
+    description: ratioInfo.description,
+    freqOverride: freqs
   });
 };
 
@@ -799,23 +875,31 @@ mediaImporter.onAudioStateChange = (res) => {
   state.xyPoints = res.xyPoints;
 
   if (state.audioMode === 'xy') {
-    state.category = 'STEREO VECTORSCOPE';
-    state.title = 'CH 1 (L) : CH 2 (R)';
-    state.consonance = 'Hardware Lissajous Trace';
-    state.description = 'Direct X-Y channel electron beam trace. Left audio channel drives horizontal X-axis; right channel drives vertical Y-axis.';
-    updateHeader();
-    updateHarmonicInfo();
+    applyMediaState('xy', {
+      category: 'STEREO VECTORSCOPE',
+      title: 'CH 1 (L) : CH 2 (R)',
+      consonance: 'Hardware Lissajous Trace',
+      description: 'Direct X-Y channel electron beam trace. Left audio channel drives horizontal X-axis; right channel drives vertical Y-axis.',
+      notes: [],
+      ratios: [1],
+      ratioInts: [1],
+      colors: ['#2ecc71', '#a8ff78'],
+      freqOverride: null
+    });
   } else if (state.audioMode === 'pitch' && res.pitchInfo) {
     const p = res.pitchInfo;
-    state.category = `DETECTED PITCH (${p.fullName})`;
-    state.title = `${p.frequency.toFixed(1)} Hz`;
-    state.consonance = `${p.cents >= 0 ? '+' : ''}${p.cents} Cents`;
-    state.description = `Real-time autocorrelation pitch extraction from audio stream. Frequency: ${p.frequency.toFixed(2)} Hz.`;
-    state.notes = [p.note];
-    state.ratioInts = [1];
-    state.colors = [NOTE_COLORS[p.note] || '#2ecc71'];
-    updateHeader();
-    updateHarmonicInfo();
+    const hz = p.frequency.toFixed(1);
+    applyMediaState(`pitch|${p.fullName}|${hz}|${p.cents}`, {
+      category: `DETECTED PITCH (${p.fullName})`,
+      title: `${hz} Hz`,
+      consonance: `${p.cents >= 0 ? '+' : ''}${p.cents} Cents`,
+      description: `Real-time autocorrelation pitch extraction from audio stream. Frequency: ${p.frequency.toFixed(2)} Hz.`,
+      notes: [p.note],
+      ratios: [1],
+      ratioInts: [1],
+      colors: [NOTE_COLORS[p.note] || '#2ecc71'],
+      freqOverride: [p.frequency]
+    });
   }
 };
 
@@ -903,11 +987,22 @@ if (btnPlayerLoop) {
 }
 
 if (playerScrubber) {
-  playerScrubber.addEventListener('input', (e) => {
-    const pct = parseFloat(e.target.value) / 100;
-    if (mediaImporter.currentMedia) {
-      mediaImporter.seek(pct * mediaImporter.currentMedia.duration);
+  const scrubTarget = () => (parseFloat(playerScrubber.value) / 100) * mediaImporter.currentMedia.duration;
+  // While playing, dragging only previews the time; the seek happens on release ('change').
+  // While paused, dragging seeks live so the picture follows the thumb.
+  playerScrubber.addEventListener('input', () => {
+    if (!mediaImporter.currentMedia) return;
+    if (mediaImporter.isPlaying) {
+      scrubbing = true;
+      if (playerTimeCurrent) playerTimeCurrent.textContent = formatTime(scrubTarget());
+      shown.time = null;
+    } else {
+      mediaImporter.seek(scrubTarget());
     }
+  });
+  playerScrubber.addEventListener('change', () => {
+    scrubbing = false;
+    if (mediaImporter.currentMedia) mediaImporter.seek(scrubTarget());
   });
 }
 
@@ -923,6 +1018,7 @@ if (btnAudioModeXy) {
   btnAudioModeXy.addEventListener('click', () => {
     state.audioMode = 'xy';
     mediaImporter.audioMode = 'xy';
+    shown.mediaKey = null;
     btnAudioModeXy.classList.add('active');
     if (btnAudioModePitch) btnAudioModePitch.classList.remove('active');
   });
@@ -932,6 +1028,7 @@ if (btnAudioModePitch) {
   btnAudioModePitch.addEventListener('click', () => {
     state.audioMode = 'pitch';
     mediaImporter.audioMode = 'pitch';
+    shown.mediaKey = null;
     btnAudioModePitch.classList.add('active');
     if (btnAudioModeXy) btnAudioModeXy.classList.remove('active');
   });
@@ -950,15 +1047,43 @@ function handleResize() {
   visualizer2D.resize(w, h);
   visualizer3D.resize(w, h);
   miniWaveform.resize(240, 48);
+  if (state.currentTab === 'matrix') intervalsGrid.resize();
 }
 window.addEventListener('resize', handleResize);
+
+// Backgrounded tab: pause the media (which releases the MIDI voices) instead of letting the
+// clock jump or notes hang.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && mediaImporter.isPlaying) {
+    mediaImporter.pause();
+  }
+});
+
+// Free area for the 2D scope: right of the side panel (or above the phone bottom sheet), below
+// the header, above the player bar. Uses offset* (layout boxes, unaffected by the slide
+// transitions) so the figure does not jitter while the panel or bar animates.
+function computeSafeArea() {
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  let left = 0;
+  let top = 0;
+  let bottom = H;
+  const panelOpen = !controlsPanel.classList.contains('collapsed');
+  const isSheet = controlsPanel.offsetWidth >= W - 1;
+  if (panelOpen && !isSheet) left = controlsPanel.offsetLeft + controlsPanel.offsetWidth;
+  if (panelOpen && isSheet) bottom = Math.min(bottom, controlsPanel.offsetTop);
+  if (headerTitle.style.display !== 'none') top = harmonicHeader.offsetTop + harmonicHeader.offsetHeight + 8;
+  if (!mediaPlayerBar.classList.contains('hidden')) bottom = Math.min(bottom, mediaPlayerBar.offsetTop);
+  return { left, top, right: W, bottom };
+}
 
 // Master Animation Loop (60+ FPS)
 let lastFrameTime = performance.now();
 function animate(currentTime) {
   requestAnimationFrame(animate);
 
-  const delta = (currentTime - lastFrameTime) * 0.001;
+  // Clamp: a stalled or backgrounded tab must not make the figure jump
+  const delta = Math.min(MAX_FRAME_DT, Math.max(0, (currentTime - lastFrameTime) * 0.001));
   lastFrameTime = currentTime;
 
   // Update media playback frame if active (MIDI notes & MP3 stereo samples)
@@ -990,6 +1115,7 @@ function animate(currentTime) {
 
   if (state.currentTab === 'lab') {
     if (state.dimension === '2D') {
+      visualizer2D.setSafeArea(computeSafeArea());
       visualizer2D.render(state);
     } else {
       visualizer3D.render(state);
@@ -998,15 +1124,19 @@ function animate(currentTime) {
     // Update real-time mini oscilloscope waveform display
     const waveData = audio.getWaveformData();
     miniWaveform.render(waveData, state.colors[1] || '#ff9f43');
-  } else {
-    intervalsGrid.render();
   }
+  // The matrix is static: it is drawn on build / resize / tab switch, not per frame.
 }
 
 // Read-only debug handle used by the e2e suite (e2e/e2e.mjs) to inspect precise state.
 window.__harmonic = { state, audio, mediaImporter, visualizer3D };
 
 // Initial Boot
+if (fileMediaInput) fileMediaInput.setAttribute('accept', ACCEPT_ATTR);
+const dropFormatsText = dropOverlay && dropOverlay.querySelector('p');
+if (dropFormatsText) dropFormatsText.textContent = `Supports ${FORMATS_LABEL}`;
+// Phones: the controls are a bottom sheet that starts closed so the oscilloscope is visible
+if (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) setPanelCollapsed(true);
 handleResize();
 buildPresetsUI();
 buildPianoUI();

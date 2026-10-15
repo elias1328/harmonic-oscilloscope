@@ -127,7 +127,7 @@ export const INTERVALS_SIMPLEST_FIRST = [
     color: '#00d2d3',
     semitones: 6,
     consonance: 'Extreme Dissonance',
-    description: 'The "Diabolus in Musica". Exactly bisects the octave. Its complex 45:32 ratio weaves an extremely dense, non-resolving mesh.'
+    description: 'The "Diabolus in Musica". 45/32 ≈ 1.406 is close to √2 ≈ 1.414 (the exact half-octave of 12-TET) but not equal to it. Its complex 45:32 ratio weaves an extremely dense, non-resolving mesh.'
   }
 ];
 
@@ -251,6 +251,20 @@ export function noteNameToSemitone(name) {
     "C'": 12, 'C5': 12
   };
   return map[clean] !== undefined ? map[clean] : 0;
+}
+
+// Piano keys (C4 to C5). "C'" is the upper octave C.
+export const PIANO_KEY_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B', "C'"];
+
+// Notes for an interval measured up from C. The octave's upper note is C', not a second C.
+export function intervalNotes(interval) {
+  return ['C', interval.semitones === 12 ? "C'" : interval.note];
+}
+
+// Piano selection derived from the current voices: only real piano keys, no duplicates.
+// Custom-ratio voices ("H4", ...) have no key, so they select nothing.
+export function pianoSelectionFromNotes(notes) {
+  return [...new Set((notes || []).filter(n => PIANO_KEY_NAMES.includes(n)))];
 }
 
 export const INTERVALS_BY_SEMITONE = {

@@ -29,6 +29,31 @@ export class Oscilloscope2D {
     this.prevTheta = null;
   }
 
+  // Free area of the window (CSS px) not covered by the panel, header or player bar.
+  setSafeArea(area) {
+    this.safeArea = area;
+  }
+
+  // Scope centre and half-size: fitted into the safe area when it is usable, else the old
+  // whole-window placement. Live-trace points are in pixels, so a geometry change restarts it.
+  layout(windowFactor) {
+    const a = this.safeArea;
+    let g;
+    if (a && a.right - a.left > 160 && a.bottom - a.top > 160) {
+      const aw = a.right - a.left;
+      const ah = a.bottom - a.top;
+      g = { centerX: a.left + aw * 0.5, centerY: a.top + ah * 0.5, halfScope: Math.min(aw, ah) * 0.5 * 0.84 };
+    } else {
+      g = { centerX: this.width * 0.52, centerY: this.height * 0.54, halfScope: Math.min(this.width, this.height) * windowFactor * 0.5 };
+    }
+    const prev = this.lastLayout;
+    if (prev && (Math.abs(prev.centerX - g.centerX) > 0.5 || Math.abs(prev.centerY - g.centerY) > 0.5 || Math.abs(prev.halfScope - g.halfScope) > 0.5)) {
+      this.clearPath();
+    }
+    this.lastLayout = g;
+    return g;
+  }
+
   resize(w, h) {
     const dpr = window.devicePixelRatio || 1;
     this.width = w;
@@ -53,10 +78,7 @@ export class Oscilloscope2D {
     ctx.fillStyle = '#08090c';
     ctx.fillRect(0, 0, w, h);
 
-    const centerX = w * 0.52;
-    const centerY = h * 0.54;
-    const scopeSize = Math.min(w, h) * 0.65;
-    const halfScope = scopeSize * 0.5;
+    const { centerX, centerY, halfScope } = this.layout(0.65);
 
     // Current notes, ratio integers, and phase
     const notes = state.notes || [];
@@ -359,10 +381,7 @@ export class Oscilloscope2D {
     ctx.fillStyle = '#08090c';
     ctx.fillRect(0, 0, w, h);
 
-    const centerX = w * 0.52;
-    const centerY = h * 0.54;
-    const scopeSize = Math.min(w, h) * 0.68;
-    const halfScope = scopeSize * 0.5;
+    const { centerX, centerY, halfScope } = this.layout(0.68);
 
     // Oscilloscope circular graticule & reticle
     ctx.save();

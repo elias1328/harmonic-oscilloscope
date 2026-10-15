@@ -42,7 +42,7 @@ describe('AudioEngine (ported)', () => {
     assert.equal(new Set(freqs).size, 3);
   });
 
-  it.fails('R2 BUG: timbre change ignores current root Hz (slider at 5 Hz -> voices recreated at 261.6 Hz, audible)', () => {
+  it('R2 BUG: timbre change ignores current root Hz (slider at 5 Hz -> voices recreated at 261.6 Hz, audible)', () => {
     const a = freshEngine();
     a.setRootFrequency(5); // slider in polyrhythm zone: tones should be silent
     assert.equal(a.voices[0].gain.gain.value, 0);
@@ -67,7 +67,7 @@ describe('AudioEngine (ported)', () => {
 });
 
 describe('MediaImporter (ported)', () => {
-  it.fails('R1 BUG: drone voices restart while media plays (ctx getter calls engine.resume -> refreshVoices)', () => {
+  it('R1 BUG: drone voices restart while media plays (ctx getter calls engine.resume -> refreshVoices)', () => {
     const { a, m } = importer();
     m.onLoaded = () => { a.stopVoices(); m.play(); }; // mirrors main.js onLoaded
     m.loadBuiltInMidiDemo();
