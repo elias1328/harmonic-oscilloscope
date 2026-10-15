@@ -30,7 +30,14 @@ const GATES = {
   'G1.10': 'zero uncaught page errors over the full session',
   'G2.7': 'R6: the MIDI demo octave step is labeled 2 : 1',
   'G2.8': 'R16: custom "4:6" shows 2 : 3; "1.5:2" shows a visible inline error',
-  'G2.9': 'B: "slowed ×N" readout visible above 30 Hz, "real time" below'
+  'G2.9': 'B: "slowed ×N" readout visible above 30 Hz, "real time" below',
+  'G3.3': 'ghost: the full figure is lit within 150 ms (≥ 70% of the lit pixels at 6 s), fainter than the trace core; 12-TET ghost precesses; MIDI ghosts within 150 ms',
+  'G3.4': 'R15: fps at 20 s ≥ 0.85 × fps at 2 s (2D live 45:32 and the X-Y demo)',
+  'G3.7': '3D snapshot PNG has ≥ 1% non-background pixels',
+  'G3.8': 'R30: no three.js chunk before the first 3D toggle, one after',
+  'G3.9': 'waveform strip clear of the 2D figure; 3D cube projected inside the free area (1280x720, 1600x1000)',
+  'G3.10': '8-voice header: no badge line starts or ends with "+"',
+  'G3.11': '3D canvas has touch-action: none'
 };
 const gates = Object.fromEntries(Object.entries(GATES).map(([id, desc]) => [id, { desc, pass: null, details: [] }]));
 const gateResult = (id, ok, detail) => {
@@ -58,6 +65,9 @@ const consoleErrors = [], pageErrors = [], dialogs = [];
 page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
 page.on('pageerror', e => pageErrors.push(String(e)));
 page.on('dialog', async d => { dialogs.push(d.message()); await d.dismiss(); });
+const requests = [];
+page.on('request', r => requests.push(r.url()));
+const threeRequests = () => requests.filter(u => /\/assets\/(three|three-addons|oscilloscope3D)-[^/]*\.js/.test(u));
 
 // Web Audio instrumentation: every oscillator, its liveness (honouring scheduled stop times),
 // the node graph it feeds, and whether it is a bandpassed polyrhythm "click" oscillator.
@@ -101,6 +111,39 @@ await page.addInitScript(() => {
   window.__liveTones = () => window.__osc.filter(r => isLive(r) && !isClick(r)).map(r => ({ f: +r.o.frequency.value.toFixed(2), gain: pathGain(r.o) }));
   window.__fps = (ms) => new Promise(res => { let n = 0; const t0 = performance.now(); const f = () => { n++; performance.now() - t0 < ms ? requestAnimationFrame(f) : res(n * 1000 / (performance.now() - t0)); }; requestAnimationFrame(f); });
   window.__nextFrame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  // Lit pixels of the 2D figure box: count, mean luminance of lit pixels, mean of the brightest 10%.
+  window.__lit = (thr = 30) => {
+    const c = document.getElementById('canvas-2d');
+    const L = window.__harmonic.visualizer2D.lastLayout;
+    const dpr = c.width / c.clientWidth;
+    const x0 = Math.max(0, Math.floor((L.centerX - L.halfScope) * dpr));
+    const y0 = Math.max(0, Math.floor((L.centerY - L.halfScope * 0.9) * dpr)); // below the top rail
+    const w = Math.min(c.width - x0, Math.floor(2 * L.halfScope * dpr));
+    const h = Math.min(c.height - y0, Math.floor(1.9 * L.halfScope * dpr));
+    const d = c.getContext('2d').getImageData(x0, y0, w, h).data;
+    const lums = [];
+    for (let i = 0; i < d.length; i += 4) {
+      const lum = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+      if (lum > thr) lums.push(lum);
+    }
+    lums.sort((a, b) => a - b);
+    const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+    return { count: lums.length, mean: mean(lums), top: mean(lums.slice(Math.floor(lums.length * 0.9))) };
+  };
+  window.__ghostHash = () => {
+    const g = window.__harmonic.visualizer2D.phosphor.ghost;
+    const d = g.getContext('2d').getImageData(0, 0, g.width, g.height).data;
+    let h = 0;
+    for (let i = 3; i < d.length; i += 4) h = (h * 31 + d[i] * (i % 9973)) % 1000000007;
+    return h;
+  };
+  // Click, then measure the figure after `ms` (all inside the page, so the timing is exact).
+  window.__clickAndMeasure = (sel, ms) => new Promise(res => {
+    const t0 = performance.now();
+    document.querySelector(sel).click();
+    const tick = () => (performance.now() - t0 >= ms ? res({ ...window.__lit(), elapsed: performance.now() - t0 }) : requestAnimationFrame(tick));
+    requestAnimationFrame(tick);
+  });
 });
 
 const txt = (sel) => page.locator(sel).first().innerText({ timeout: 2000 }).catch(() => '<missing>');
@@ -129,6 +172,7 @@ await section('boot', [], async () => {
   log('boot: 2D canvas visible, 3D hidden', (await visible('#canvas-2d')) && !(await visible('#viewport-3d')));
   log('boot: media player bar hidden', await barHidden());
   note('boot: oscillators live before any user gesture', JSON.stringify(await page.evaluate(() => window.__live())));
+  gateResult('G3.8', threeRequests().length === 0, `three.js chunks requested before any 3D view: ${threeRequests().length}`);
   await page.mouse.click(1000, 500); // first gesture unlock (on the canvas, away from the panel)
   await wait(400);
   note('after first click: live oscillators (Hz)', JSON.stringify(await page.evaluate(() => window.__live())));
@@ -145,6 +189,8 @@ await section('presets', [], async () => {
     await chip.click();
     await wait(900);
     const dim3 = await visible('#viewport-3d');
+    if (dim3 && !threeRequests().length) await wait(800);
+    if (dim3) gateResult('G3.8', threeRequests().length > 0, `after the first 3D view (${label}): ${threeRequests().map(u => u.split('/').pop()).join(', ')}`);
     log(`preset "${label}"`, (await chip.getAttribute('class')).includes('active'), `title=${await txt('#header-title')} | 3D=${dim3} | voices=${JSON.stringify(await page.evaluate(() => window.__live()))}`);
     await shot(`02-preset-${i}-${label.replace(/[^a-z0-9]+/gi, '_').slice(0, 30)}`);
   }
@@ -292,9 +338,147 @@ await section('3d + snapshot', [], async () => {
   log('snapshot 2D produces PNG', statSync(p2).size > 10000, `${statSync(p2).size} bytes`);
 });
 
+// ---------------- Phase 3 visuals ----------------
+await section('3d snapshot & layout', ['G3.7', 'G3.9', 'G3.11'], async () => {
+  await clickPreset(5); await wait(1500); // dominant 7th, 3D
+  const snap = await page.evaluate(async () => {
+    const url = window.__harmonic.snapshotDataURL();
+    const img = new Image();
+    await new Promise(r => { img.onload = r; img.src = url; });
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    const x = c.getContext('2d');
+    x.drawImage(img, 0, 0);
+    const d = x.getImageData(0, 0, c.width, c.height).data;
+    let lit = 0;
+    for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - 8) + Math.abs(d[i + 1] - 9) + Math.abs(d[i + 2] - 12) > 24) lit++;
+    return { frac: lit / (d.length / 4), w: c.width, h: c.height };
+  });
+  gateResult('G3.7', snap.frac >= 0.01, `3D snapshot ${snap.w}x${snap.h}: ${(snap.frac * 100).toFixed(2)}% non-background pixels`);
+  const ta = await page.evaluate(() => getComputedStyle(window.__harmonic.visualizer3D.renderer.domElement).touchAction);
+  gateResult('G3.11', ta === 'none', `3D canvas touch-action: ${ta}`);
+  await shot('15-3d-dom7-bloom');
+  for (const [w, h] of [[1600, 1000], [1280, 720]]) {
+    await page.setViewportSize({ width: w, height: h }); await wait(700);
+    await page.dblclick('#viewport-3d canvas', { position: { x: w - 60, y: Math.round(h / 2) } }); await wait(900);
+    const r = await page.evaluate(() => {
+      const v = window.__harmonic.visualizer3D;
+      const a = window.__harmonic.computeSafeArea();
+      v.camera.updateMatrixWorld();
+      const pts = [];
+      const THREEVec = v.camera.position.constructor;
+      for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) {
+        const p = new THREEVec(x, y, z).project(v.camera);
+        pts.push({ x: (p.x + 1) / 2 * window.innerWidth, y: (1 - p.y) / 2 * window.innerHeight });
+      }
+      const b = { l: Math.min(...pts.map(p => p.x)), r: Math.max(...pts.map(p => p.x)), t: Math.min(...pts.map(p => p.y)), b: Math.max(...pts.map(p => p.y)) };
+      return { a, b };
+    });
+    const inside = r.b.l >= r.a.left && r.b.r <= r.a.right && r.b.t >= r.a.top && r.b.b <= r.a.bottom;
+    gateResult('G3.9', inside, `3D ${w}x${h}: cube [${r.b.l.toFixed(0)}..${r.b.r.toFixed(0)} x ${r.b.t.toFixed(0)}..${r.b.b.toFixed(0)}] in free area [${r.a.left}..${r.a.right} x ${r.a.top.toFixed(0)}..${r.a.bottom}]`);
+    await shot(`15-3d-dom7-${w}x${h}`);
+  }
+  await page.setViewportSize({ width: 1600, height: 1000 }); await wait(400);
+});
+
+await section('ghost', ['G3.3'], async () => {
+  // 4:5:6:7 (loads in 3D) shown in 2D
+  await clickPreset(5); await wait(600);
+  const early1 = await page.evaluate(() => window.__clickAndMeasure('#btn-toggle-dimension', 70));
+  await wait(6000 - early1.elapsed);
+  const late1 = await page.evaluate(() => window.__lit());
+  await shot('16-ghost-dom7-2d-6s');
+  const ok1 = early1.elapsed <= 150 && early1.count >= 0.7 * late1.count && early1.mean < 0.5 * late1.top;
+  gateResult('G3.3', ok1, `4:5:6:7 2D: at ${early1.elapsed.toFixed(0)} ms ${early1.count} lit px (mean lum ${early1.mean.toFixed(0)}), at 6 s ${late1.count} lit px (core lum ${late1.top.toFixed(0)}) -> ${(100 * early1.count / late1.count).toFixed(0)}%`);
+  // 3:2
+  await ensurePanelOpen();
+  const early2 = await page.evaluate(() => window.__clickAndMeasure('.preset-chip[data-preset="fifth"]', 70));
+  await shot('16-ghost-fifth-100ms');
+  await wait(6000 - early2.elapsed);
+  const late2 = await page.evaluate(() => window.__lit());
+  await shot('16-ghost-fifth-6s');
+  gateResult('G3.3', early2.elapsed <= 150 && early2.count >= 0.7 * late2.count && early2.mean < 0.5 * late2.top, `3:2: at ${early2.elapsed.toFixed(0)} ms ${early2.count} lit px (mean lum ${early2.mean.toFixed(0)}), at 6 s ${late2.count} lit px (core lum ${late2.top.toFixed(0)}) -> ${(100 * early2.count / late2.count).toFixed(0)}%`);
+  // 12-TET: the ghost follows the precessing shape; in JI it is fixed
+  const hJ1 = await page.evaluate(() => window.__ghostHash()); await wait(2500);
+  const hJ2 = await page.evaluate(() => window.__ghostHash());
+  await page.click('#btn-tuning'); await wait(300);
+  const hT1 = await page.evaluate(() => window.__ghostHash()); await wait(2500);
+  const hT2 = await page.evaluate(() => window.__ghostHash());
+  await shot('16-ghost-fifth-12tet');
+  await page.click('#btn-tuning'); await wait(200);
+  gateResult('G3.3', hJ1 === hJ2 && hT1 !== hT2, `ghost image over 2.5 s: JI ${hJ1 === hJ2 ? 'unchanged' : 'changed'}, 12-TET ${hT1 !== hT2 ? 'changed (precessing)' : 'unchanged'}`);
+});
+
+await section('strip vs 2D figure', ['G3.9'], async () => {
+  for (const [w, h] of [[1600, 1000], [1280, 720]]) {
+    for (const withMedia of [false, true]) {
+      await page.setViewportSize({ width: w, height: h }); await wait(400);
+      await ensurePanelOpen();
+      if (withMedia) { await page.click('#btn-demo-midi'); await wait(600); } else { await clickPreset(0); await wait(400); }
+      const r = await page.evaluate(() => {
+        const L = window.__harmonic.visualizer2D.lastLayout;
+        const s = document.getElementById('bottom-strip').getBoundingClientRect();
+        const m = 24; // orbs and labels outside the rails
+        return { fig: { l: L.centerX - L.halfScope - m, r: L.centerX + L.halfScope, t: L.centerY - L.halfScope - m, b: L.centerY + L.halfScope }, s: { l: s.left, r: s.right, t: s.top, b: s.bottom, w: s.width } };
+      });
+      const hit = r.s.w > 0 && r.fig.l < r.s.r && r.s.l < r.fig.r && r.fig.t < r.s.b && r.s.t < r.fig.b;
+      gateResult('G3.9', !hit, `2D ${w}x${h}${withMedia ? ' + player' : ''}: figure [${r.fig.l.toFixed(0)}..${r.fig.r.toFixed(0)} x ${r.fig.t.toFixed(0)}..${r.fig.b.toFixed(0)}] strip [${r.s.l.toFixed(0)}..${r.s.r.toFixed(0)} x ${r.s.t.toFixed(0)}..${r.s.b.toFixed(0)}]`);
+      await shot(`17-strip-${w}x${h}${withMedia ? '-midi' : ''}`);
+      if (withMedia) { await page.click('#btn-player-eject'); await wait(300); }
+    }
+  }
+  await page.setViewportSize({ width: 1600, height: 1000 }); await wait(300);
+});
+
+await section('8-voice header', ['G3.10'], async () => {
+  for (const [w, h] of [[1600, 1000], [1280, 720], [390, 844]]) {
+    await page.setViewportSize({ width: w, height: h }); await wait(400);
+    await ensurePanelOpen();
+    await page.fill('#input-custom-ratio', '8:9:10:11:12:13:14:15'); await page.press('#input-custom-ratio', 'Enter'); await wait(400);
+    const rows = await page.evaluate(() => {
+      const kids = [...document.getElementById('header-notes-badge').children].filter(k => !k.classList.contains('line-break') && getComputedStyle(k).display !== 'none' && k.getClientRects().length);
+      const byTop = new Map();
+      kids.forEach(k => { const t = Math.round(k.getBoundingClientRect().top); if (!byTop.has(t)) byTop.set(t, []); byTop.get(t).push(k.textContent.trim()); });
+      return [...byTop.values()];
+    });
+    // no line starts/ends with "+", and no two notes on a line lack their "+"
+    const bad = rows.filter(r => r[0] === '+' || r[r.length - 1] === '+' || r.some((x, i) => i > 0 && x !== '+' && r[i - 1] !== '+'));
+    gateResult('G3.10', bad.length === 0, `${w}x${h}: ${rows.length} line(s): ${rows.map(r => r.join(' ')).join(' / ')}`);
+    await shot(`18-header-8-voices-${w}x${h}`);
+  }
+  await page.setViewportSize({ width: 1600, height: 1000 }); await wait(300);
+  await clickPreset(0);
+});
+
+await section('fps over time', ['G3.4'], async () => {
+  await clickPreset(0);
+  if (await visible('#viewport-3d')) await page.click('#btn-toggle-dimension');
+  const t0 = Date.now();
+  await page.fill('#input-custom-ratio', '45:32'); await page.press('#input-custom-ratio', 'Enter');
+  await wait(1500 - (Date.now() - t0));
+  const f2 = await page.evaluate(() => window.__fps(1000));
+  await wait(19500 - (Date.now() - t0));
+  const f20 = await page.evaluate(() => window.__fps(1000));
+  await shot('19-tritone-live-20s');
+  gateResult('G3.4', f20 >= 0.85 * f2, `2D live 45:32: ${f2.toFixed(1)} fps at 2 s, ${f20.toFixed(1)} fps at 20 s`);
+  await page.click('#btn-demo-audio');
+  const t1 = Date.now();
+  await wait(1500);
+  const x2 = await page.evaluate(() => window.__fps(1000));
+  await wait(19500 - (Date.now() - t1));
+  const x20 = await page.evaluate(() => window.__fps(1000));
+  await shot('19-xy-demo-20s');
+  gateResult('G3.4', x20 >= 0.85 * x2, `X-Y demo: ${x2.toFixed(1)} fps at 2 s, ${x20.toFixed(1)} fps at 20 s`);
+  await page.click('#btn-player-eject'); await wait(300);
+});
+
 // ---------------- MIDI demo: G1.1, G1.6, G1.7 ----------------
 await section('midi demo', ['G1.1', 'G1.6', 'G1.7'], async () => {
   await clickPreset(0); await wait(300); // drone would be C 261.63 + G 392.44 (just)
+  await page.evaluate(() => {
+    window.__chordTimes = [];
+    window.__harmonic.store.subscribe(s => s.chord, (c) => window.__chordTimes.push({ id: c.id, at: performance.now() }), { immediate: false });
+  });
   await page.click('#btn-demo-midi'); await wait(600);
   log('MIDI demo: player bar shown', !(await barHidden()));
   log('MIDI demo: title', (await txt('#player-track-title')).includes('Harmonic Intervals Journey'), await txt('#player-track-title'));
@@ -322,6 +506,16 @@ await section('midi demo', ['G1.1', 'G1.6', 'G1.7'], async () => {
   gateResult('G2.7', octTitle === '2 : 1' && /OCTAVE/.test(octCat), `MIDI demo at ~18.2 s: ${octCat} | ${octTitle}`);
   await shot('09b-midi-demo-octave');
   note('MIDI demo header sequence (partial)', [...titles].join(' ;; '));
+  const gt = await page.evaluate(() => {
+    const log = window.__harmonic.visualizer2D.phosphor.ghostLog;
+    return window.__chordTimes.map(c => {
+      const g = log.find(e => String(e.key).startsWith(`${c.id}|`));
+      return { id: c.id, delay: g ? g.at - c.at : null };
+    });
+  });
+  const missing = gt.filter(g => g.delay === null).length;
+  const worst = Math.max(...gt.filter(g => g.delay !== null).map(g => g.delay));
+  gateResult('G3.3', gt.length >= 3 && missing === 0 && worst <= 150, `MIDI demo: ${gt.length} chord changes, every ghost drawn within ${worst.toFixed(0)} ms of its chord change (missing ${missing})`);
   log('R23 MIDI demo never shows SILENCE between steps', ![...titles].some(t => t.includes('SILENCE')));
   await shot('09-midi-demo-playing');
 

@@ -303,3 +303,19 @@ describe('Phase 2 in the app', () => {
     y.slice(1).forEach((t, i) => expect(Math.abs(t - y[i] - 1 / 6)).toBeLessThan(0.001));
   });
 });
+
+describe('G3.12: idle matrix', () => {
+  it('G3.12: in the matrix tab no canvas is drawn per animation frame; a resize redraws the cards', () => {
+    h.click('#btn-tab-matrix');
+    h.frames(2);
+    const all = [...document.querySelectorAll('canvas')].map(c => c.getContext('2d'));
+    const count = () => all.reduce((n, c) => n + c.calls.length, 0);
+    const before = count();
+    h.frames(60);
+    expect(count()).toBe(before);
+    window.dispatchEvent(new Event('resize'));
+    const cards = [...document.querySelectorAll('.card-canvas')].map(c => c.getContext('2d'));
+    expect(cards.reduce((n, c) => n + c.calls.filter(k => k === 'stroke').length, 0)).toBeGreaterThan(0);
+    expect(count()).toBeGreaterThan(before);
+  });
+});

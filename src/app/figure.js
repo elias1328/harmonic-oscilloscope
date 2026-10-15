@@ -44,6 +44,9 @@ export class Figure {
     this.ratioInts = chord.ratioInts();
     this.k = freqs.length ? timeScale(freqs[0], this.ratioInts[0], state.tClose) : 1;
     this.deltas = voiceOffsets(this.ratioInts, state.phi);
+    // closed: the real frequencies are exactly the integer ratios (just intonation), so one
+    // period closes; in 12-TET the figure precesses instead.
+    this.closed = freqs.every((f, i) => Math.abs(f / freqs[0] - this.ratioInts[i] / this.ratioInts[0]) < 1e-9);
     const key = `${chord.id}|${freqs.join(',')}|${this.k}|${state.phi}|${state.traceReset}`;
     if (key === this.key) return false;
     const reset = chord.id !== this.chordId || state.traceReset !== this.resetCount;

@@ -5,6 +5,31 @@ import { voiceFreqs, rootHz } from '../app/figure.js';
 
 const $ = (id) => document.getElementById(id);
 
+// When the notes wrap onto several lines, a "+" must never start or end a line. Separators are
+// decided left to right: each is shown and kept only if both neighbours share its line (deciding
+// in order means a hidden one never leaves two notes on one line without their "+").
+export function tidySeparators(badge) {
+  badge.querySelectorAll('.line-break').forEach(b => b.remove());
+  const kids = [...badge.children];
+  const seps = kids.filter(k => k.classList.contains('sep'));
+  seps.forEach(k => { k.style.display = 'none'; });
+  for (const sep of seps) {
+    sep.style.display = '';
+    const i = kids.indexOf(sep);
+    const prev = kids[i - 1];
+    const next = kids[i + 1];
+    if (!prev || !next || prev.offsetTop !== sep.offsetTop || next.offsetTop !== sep.offsetTop) {
+      sep.style.display = 'none';
+      // the next note only fits on this line without its "+": start it on a new line instead
+      if (prev && next && prev.offsetTop === next.offsetTop) {
+        const br = document.createElement('span');
+        br.className = 'line-break';
+        next.before(br);
+      }
+    }
+  }
+}
+
 export function initHeader(store) {
   const category = $('header-category');
   const title = $('header-title');
@@ -16,6 +41,8 @@ export function initHeader(store) {
   const acoustic = $('info-acoustic-mode');
 
   store.subscribe(s => s.tab, (tab) => { header.style.display = tab === 'matrix' ? 'none' : ''; });
+  window.addEventListener('resize', () => tidySeparators(badge));
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => tidySeparators(badge));
 
   // Everything shown depends only on the chord, the tuning and the speed slider.
   store.subscribe(s => [s.chord, s.tuning, s.speedVal], (_, s) => {
@@ -31,9 +58,10 @@ export function initHeader(store) {
     } else {
       badge.innerHTML = chord.voices.map((v, i) => {
         const color = v.color || NOTE_COLORS[v.label] || '#fff';
-        const plus = i < chord.size - 1 ? '<span style="color: rgba(255,255,255,0.4)">+</span>' : '';
-        return `<span style="color: ${color}">${v.label} <small style="font-size: 13px; opacity: 0.85;">(${freqs[i].toFixed(1)} Hz)</small></span> ${plus}`;
+        const plus = i < chord.size - 1 ? '<span class="sep" style="color: rgba(255,255,255,0.4)">+</span>' : '';
+        return `<span class="note" style="color: ${color}">${v.label} <small style="font-size: 13px; opacity: 0.85;">(${freqs[i].toFixed(1)} Hz)</small></span> ${plus}`;
       }).join(' ');
+      tidySeparators(badge);
     }
 
     consonance.textContent = chord.meta.consonance;

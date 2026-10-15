@@ -12,9 +12,12 @@ import { vi } from 'vitest';
 import { installFakeAudio, audioLog } from './fakeAudio.js';
 
 export class FakeWebGLRenderer {
-  constructor() { this.domElement = document.createElement('canvas'); this.renders = 0; }
-  setPixelRatio() {}
+  constructor(opts = {}) { this.opts = opts; this.domElement = document.createElement('canvas'); this.renders = 0; this.pr = 1; }
+  setPixelRatio(p) { this.pr = p; }
+  getPixelRatio() { return this.pr; }
+  setClearColor() {}
   setSize(w, h) { this.domElement.width = w; this.domElement.height = h; }
+  getSize(v) { return v.set(this.domElement.width, this.domElement.height); }
   render() { this.renders++; }
 }
 

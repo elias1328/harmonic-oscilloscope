@@ -9,10 +9,10 @@ import { AudioEngine } from './audio/audioEngine.js';
 import { MediaImporter } from './audio/mediaImporter.js';
 import { ClickScheduler } from './audio/clickScheduler.js';
 import { Oscilloscope2D } from './visualizer/oscilloscope2D.js';
-import { Oscilloscope3D } from './visualizer/oscilloscope3D.js';
 import { IntervalsGrid } from './visualizer/intervalsGrid.js';
 import { MiniWaveform } from './visualizer/miniWaveform.js';
 import { Figure, rootHz } from './app/figure.js';
+import { persistenceTau } from './visualizer/phosphor2D.js';
 import { createActions } from './app/actions.js';
 import { bindAudio } from './app/audioSync.js';
 import { bindMedia } from './app/mediaBridge.js';
@@ -47,7 +47,9 @@ const store = createStore({
   media: null,
   customError: '',
   traceReset: 0,
-  playerReset: 0
+  playerReset: 0,
+  persistence: 50, // slider 0–100 (100 = ∞); used by the X-Y scope and 12-TET Full Loop
+  bloom: true
 });
 
 const audio = new AudioEngine();
@@ -55,9 +57,24 @@ const importer = new MediaImporter(audio);
 const clock = new Clock(() => performance.now() / 1000);
 const figure = new Figure();
 const visualizer2D = new Oscilloscope2D($('canvas-2d'));
-const visualizer3D = new Oscilloscope3D($('viewport-3d'));
+// three.js is loaded on the first switch to 3D (keeps the initial bundle small)
+let visualizer3D = null;
+let loading3D = null;
+function ensure3D() {
+  if (!loading3D) {
+    loading3D = import('./visualizer/oscilloscope3D.js').then(({ Oscilloscope3D }) => {
+      visualizer3D = new Oscilloscope3D($('viewport-3d'));
+      visualizer3D.setBloom(store.get().bloom);
+      handleResize();
+      return visualizer3D;
+    });
+  }
+  return loading3D;
+}
+store.subscribe(s => s.dimension, (d) => { if (d === '3D') ensure3D(); });
+store.subscribe(s => s.bloom, (on) => visualizer3D && visualizer3D.setBloom(on), { immediate: false });
 const miniWaveform = new MiniWaveform($('waveform-canvas'));
-const actions = createActions({ store, audio, importer, visualizer3D });
+const actions = createActions({ store, audio, importer, get3D: () => visualizer3D });
 const grid = new IntervalsGrid($('intervals-grid-view'), (interval) => actions.loadInterval(interval));
 const clicks = new ClickScheduler({
   engine: audio, clock, model: figure.model,
@@ -68,11 +85,14 @@ const clicks = new ClickScheduler({
 bindAudio(store, audio);
 const bridge = bindMedia({ store, audio, importer });
 
+function snapshotDataURL() {
+  if (store.get().dimension === '3D' && visualizer3D) return visualizer3D.snapshot();
+  return $('canvas-2d').toDataURL('image/png');
+}
 function snapshot() {
-  const canvas = store.get().dimension === '2D' ? $('canvas-2d') : visualizer3D.renderer.domElement;
   const link = document.createElement('a');
   link.download = `harmonic-oscilloscope-${store.get().chord.meta.title.replace(/[^a-zA-Z0-9]/g, '_')}.png`;
-  link.href = canvas.toDataURL('image/png');
+  link.href = snapshotDataURL();
   link.click();
 }
 
@@ -105,7 +125,7 @@ function useAudioClock() {
 
 function handleResize() {
   visualizer2D.resize(window.innerWidth, window.innerHeight);
-  visualizer3D.resize(window.innerWidth, window.innerHeight);
+  if (visualizer3D) visualizer3D.resize(window.innerWidth, window.innerHeight);
   miniWaveform.resize(240, 48);
   if (store.get().tab === 'matrix') grid.resize();
 }
@@ -126,15 +146,20 @@ function animate() {
   if (figure.sync(store.get(), t)) clicks.invalidate();
   const state = store.get();
   if (state.tab === 'lab') {
+    const xyMode = state.media && state.media.type === 'audio' && state.media.audioMode === 'xy';
     const frame = {
       figure, t, drawMode: state.drawMode,
       labels: state.chord.labels(), colors: state.chord.colors(),
-      xyPoints: state.media && state.media.type === 'audio' && state.media.audioMode === 'xy' ? bridge.frame.xyPoints : null
+      persistence: persistenceTau(state.persistence), bloom: state.bloom,
+      xyPoints: xyMode ? bridge.frame.xyPoints : null,
+      xy: xyMode && bridge.frame.xy ? bridge.frame.xy : null
     };
+    bridge.frame.xy = null; // each X-Y segment is drawn once
     if (state.dimension === '2D') {
       visualizer2D.setSafeArea(computeSafeArea());
       visualizer2D.render(frame);
-    } else {
+    } else if (visualizer3D) {
+      visualizer3D.setSafeArea(computeSafeArea());
       visualizer3D.render(frame);
     }
     const colors = state.chord.colors();
@@ -145,7 +170,8 @@ function animate() {
 
 // Read-only debug handle used by the e2e suite (e2e/e2e.mjs) and the jsdom tests.
 window.__harmonic = {
-  store, audio, mediaImporter: importer, visualizer3D, clock, figure, clicks,
+  store, audio, mediaImporter: importer, visualizer2D, clock, figure, clicks, computeSafeArea, snapshotDataURL,
+  get visualizer3D() { return visualizer3D; },
   get state() { return store.get(); }
 };
 

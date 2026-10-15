@@ -140,7 +140,22 @@
         </div>
         <input type="range" id="slider-phase" min="0" max="6.283" step="0.05" value="0" />
         <div style="font-size: 11px; color: #8892b0; margin-top: 5px; line-height: 1.4;">
-          💡 <strong>Phase Offset (φ):</strong> Swings the voices' relative phase around the clearest view of the figure (φ = 0). The swing stays clear of the phases where the curve would collapse into a retraced arc. Acoustically, human ears are phase-deaf to isolated pitch (Ohm's Law), but phase shifts rhythmic click syncopation (&lt; 20 Hz) and creates audible stereo spatial widening!
+          💡 <strong>Phase Offset (φ):</strong> Adds a relative phase to the upper voices. φ = 0 is the clearest view of the figure; sweeping it rotates the figure like a turning 3D wireframe, and at some phases it really collapses into a back-and-forth arc for an instant. Acoustically, human ears are phase-deaf to isolated pitch (Ohm's Law), but phase shifts rhythmic click syncopation (&lt; 20 Hz) and creates audible stereo spatial widening!
+        </div>
+      </div>
+
+      <!-- Phosphor display -->
+      <div class="control-group">
+        <div class="control-label">
+          <span>Phosphor Persistence</span>
+          <span class="control-val" id="val-persistence">1.0 s</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <input type="range" id="slider-persistence" min="0" max="100" step="1" value="50" />
+          <button class="btn-toggle active" id="btn-glow" style="flex: 0 0 auto;" title="Bloom glow (turns itself off if frames get slow)">✨ Glow</button>
+        </div>
+        <div style="font-size: 11px; color: #8892b0; margin-top: 5px;" id="persistence-help">
+          💡 How long the trace keeps glowing in the X-Y scope and the 12-TET Full Loop. Live Trace keeps everything (∞); the faint ghost always shows the complete figure.
         </div>
       </div>
 

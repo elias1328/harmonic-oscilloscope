@@ -2,6 +2,7 @@
 
 import { rootHz } from '../app/figure.js';
 import { timeScale } from '../core/clock.js';
+import { persistenceTau } from '../visualizer/phosphor2D.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -20,6 +21,18 @@ export function initPanel(store, actions) {
   const tuning = $('btn-tuning');
 
   speed.addEventListener('input', () => store.set({ speedVal: parseFloat(speed.value) }));
+  const persistence = $('slider-persistence');
+  const glow = $('btn-glow');
+  persistence.addEventListener('input', () => store.set({ persistence: parseFloat(persistence.value) }));
+  glow.addEventListener('click', () => store.set({ bloom: !store.get().bloom }));
+  store.subscribe(s => s.persistence, (v) => {
+    const tau = persistenceTau(v);
+    $('val-persistence').textContent = tau === Infinity ? '∞' : `${tau < 10 ? tau.toFixed(1) : Math.round(tau)} s`;
+  });
+  store.subscribe(s => s.bloom, (on) => {
+    glow.classList.toggle('active', on);
+    glow.textContent = on ? '✨ Glow' : '✨ Glow off';
+  });
   slowmo.addEventListener('input', () => store.set({ tClose: parseFloat(slowmo.value) }));
   phase.addEventListener('input', () => store.set({ phi: parseFloat(phase.value) }));
   volume.addEventListener('input', () => store.set({ volume: parseFloat(volume.value) }));

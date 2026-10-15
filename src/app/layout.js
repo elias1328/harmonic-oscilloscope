@@ -1,5 +1,5 @@
-// Free area for the 2D scope: right of the side panel (or above the phone bottom sheet), below
-// the header, above the player bar. Uses offset* (layout boxes, unaffected by the slide
+// Free area for the 2D/3D scope: right of the side panel (or above the phone bottom sheet), below
+// the header, above the player bar and left of the waveform strip. Uses offset* (layout boxes, unaffected by the slide
 // transitions) so the figure does not jitter while the panel or bar animates.
 export function computeSafeArea() {
   const $ = (id) => document.getElementById(id);
@@ -17,5 +17,11 @@ export function computeSafeArea() {
   if (panelOpen && isSheet) bottom = Math.min(bottom, panel.offsetTop);
   if (header.style.display !== 'none') top = header.offsetTop + header.offsetHeight + 8;
   if (!bar.classList.contains('hidden')) bottom = Math.min(bottom, bar.offsetTop);
-  return { left, top, right: W, bottom };
+  let right = W;
+  const strip = $('bottom-strip');
+  if (strip && strip.offsetWidth && getComputedStyle(strip).display !== 'none') {
+    // keep the figure clear of the waveform strip in the corner
+    right = Math.min(right, strip.offsetLeft - 16);
+  }
+  return { left, top, right, bottom };
 }

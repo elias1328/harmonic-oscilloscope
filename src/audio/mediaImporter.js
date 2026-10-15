@@ -44,6 +44,7 @@ export class MediaImporter {
     this.audioMode = 'xy'; // 'xy' | 'pitch'
     this.lastPitchTime = -Infinity;
     this.lastPitchInfo = null;
+    this.xyCursor = null;
   }
 
   // note instance -> voice of the notes currently sounding
@@ -204,6 +205,7 @@ export class MediaImporter {
 
       this.currentTime = 0;
       this.lastPitchInfo = null;
+      this.xyCursor = null;
       if (this.onLoaded) this.onLoaded(this.currentMedia);
       return this.currentMedia;
     } catch (err) {
@@ -265,6 +267,7 @@ export class MediaImporter {
     if (!this.currentMedia) return;
     const clampedTime = Math.max(0, Math.min(this.currentMedia.duration, time));
     this.currentTime = clampedTime;
+    this.xyCursor = null;
 
     if (this.isPlaying) {
       if (this.currentMedia.type === 'audio') {
@@ -459,6 +462,21 @@ export class MediaImporter {
       windowBuf[i] = x;
     }
 
+    // Samples played since the previous frame (media-clock delta × sample rate), for the phosphor
+    // vectorscope: each frame draws only the new piece of the beam path.
+    const len = this.audioBuffer.length;
+    let start = this.xyCursor;
+    if (start === null || currentSample < start || currentSample - start > sampleRate * 0.5) {
+      start = Math.max(0, currentSample - 1); // first frame or a jump (seek, loop): restart
+    }
+    const xySegment = [];
+    const quad = Math.floor(sampleRate / (4 * 440));
+    for (let i = start; i < currentSample; i++) {
+      const idx = i % len;
+      xySegment.push({ x: leftData[idx] || 0, y: rightData ? (rightData[idx] || 0) : (leftData[(idx + quad) % len] || 0) });
+    }
+    this.xyCursor = currentSample;
+
     // Real-time pitch detection: only in pitch mode, throttled to PITCH_INTERVAL_MS
     let pitchInfo = null;
     if (this.audioMode === 'pitch') {
@@ -484,6 +502,8 @@ export class MediaImporter {
       type: 'audio',
       mode: this.audioMode,
       xyPoints,
+      xySegment,
+      xyStart: start,
       pitchInfo
     };
 
@@ -603,6 +623,7 @@ export class MediaImporter {
     }
 
     this.audioBuffer = audioBuffer;
+    this.xyCursor = null;
     this.currentMedia = {
       type: 'audio',
       name: 'Demo: Synthesized Stereo Oscilloscope Music (X-Y Mode)',

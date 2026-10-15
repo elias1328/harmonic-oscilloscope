@@ -9,9 +9,9 @@
 // δ₀ = (π/2)(1 − b/a) + π/(2a) sits midway between two such phases, so the octave draws a
 // figure-8 and 4:3, 6:5, 8:5 and 16:15 draw closed loops.
 //
-// The user phase φ swings δ around δ₀ (δ = δ₀ + A·sin φ). Any full sweep of δ must cross a
-// degenerate phase, so the swing amplitude A keeps a safety margin from them; for very dense
-// ratios (e.g. 45:32, whose distinct-phase window is only ~0.1 rad) A is 0.
+// The user phase φ is added on top: δ = δ₀ + φ over the full 0–2π range. At φ = 0 every figure
+// is at its clearest; sweeping φ passes through the degenerate phases, where the curve really
+// does collapse into a retraced arc for an instant (true physics, not hidden).
 
 import { gcd } from '../core/fraction.js';
 
@@ -35,17 +35,10 @@ export function midpointOffset(a, b) {
   return (Math.PI / 2) * (1 - B / A) + Math.PI / (2 * A);
 }
 
-/** Largest φ swing that keeps the pair a:b clear of its degenerate phases. */
-export function phiSwing(a, b) {
-  const g = gcd(a, b) || 1;
-  const halfGap = Math.PI / (2 * (a / g));
-  return Math.max(0, 0.7 * halfGap - 0.06);
-}
-
 /** δ_i for every voice (root δ_0 = 0), from the nominal integer ratio and the user phase φ. */
 export function voiceOffsets(ratioInts, phi = 0) {
   const a = ratioInts[0];
-  return ratioInts.map((b, i) => (i === 0 ? 0 : midpointOffset(a, b) + phiSwing(a, b) * Math.sin(phi)));
+  return ratioInts.map((b, i) => (i === 0 ? 0 : midpointOffset(a, b) + phi));
 }
 
 /** Projection for n voices into `dims` (2 or 3) dimensions, normalized to [-1, 1]. */

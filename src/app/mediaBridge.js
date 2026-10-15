@@ -4,12 +4,13 @@
 import { chordFromPitch, xyChord } from '../core/voices.js';
 
 export function bindMedia({ store, audio, importer }) {
-  const frame = { xyPoints: null };
+  const frame = { xyPoints: null, xy: null };
   let shownKey = null;
 
   importer.onLoaded = (info) => {
     shownKey = null;
     frame.xyPoints = null;
+    frame.xy = null;
     importer.audioMode = 'xy';
     store.set({
       media: { type: info.type, info, audioMode: info.type === 'midi' ? 'midi' : 'xy', playing: false, time: 0, duration: info.duration },
@@ -41,12 +42,15 @@ export function bindMedia({ store, audio, importer }) {
     if (!s.media || s.media.type !== 'audio') return;
     if (s.media.audioMode === 'xy') {
       frame.xyPoints = res.xyPoints;
+      const seg = res.xySegment || [];
+      frame.xy = { segment: seg, head: seg.length ? seg[seg.length - 1] : (res.xyPoints || [])[0] };
       if (shownKey !== 'xy') {
         shownKey = 'xy';
         store.set({ chord: xyChord() });
       }
     } else if (res.pitchInfo) {
       frame.xyPoints = null;
+      frame.xy = null;
       const p = res.pitchInfo;
       const key = `pitch|${p.fullName}|${p.frequency.toFixed(1)}|${p.cents}`;
       if (key === shownKey) return;
@@ -62,7 +66,7 @@ export function bindMedia({ store, audio, importer }) {
       if (!m) return;
       importer.audioMode = mode;
       shownKey = null;
-      if (mode !== 'xy') frame.xyPoints = null;
+      if (mode !== 'xy') { frame.xyPoints = null; frame.xy = null; }
       store.set({ media: { ...m, audioMode: mode } });
     }
   };

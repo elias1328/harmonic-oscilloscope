@@ -3,14 +3,14 @@
 
 import { PRESETS, chordFromPreset, chordFromInterval, chordFromPianoKeys, parseCustomRatio, emptyChord } from '../core/voices.js';
 
-export function createActions({ store, audio, importer, visualizer3D }) {
+export function createActions({ store, audio, importer, get3D }) {
   const get = store.get;
 
   const actions = {
     exitMedia() {
       if (!get().media) return;
       importer.pause();
-      visualizer3D.resetMaterials();
+      if (get3D()) get3D().resetMaterials();
       audio.setDroneEnabled(true, { rebuild: false });
       store.set({ media: null });
     },

@@ -5,7 +5,9 @@ import { closedCurve, voiceOffsets, midpointOffset, makeProjector, project } fro
 import { INTERVALS_SIMPLEST_FIRST, CHORD_PRESETS } from '../src/math/harmonics.js';
 import { chordFromPreset, parseCustomRatio } from '../src/core/voices.js';
 
-const PHIS = Array.from({ length: 20 }, (_, i) => (2 * Math.PI * i) / 20);
+// G3.2 / user decision (a): φ is a truthful full sweep (δ = δ₀ + φ), so a retrace at some φ is
+// real physics. The no-retrace gate (G2.3) is applied at φ = 0 only (the sanctioned relaxation).
+const PHIS = [0];
 const N = 2048;
 
 // min over shifts s of max_t ‖p(s−t) − p(t)‖ over one closed period (0 = the curve retraces).
@@ -41,7 +43,7 @@ describe('R8: no retracing (G2.3)', () => {
   });
 
   for (const { name, ints } of [...intervalRatios, ...presetRatios]) {
-    it(`R8: ${name} never retraces at 20 φ values (2D${ints.length > 2 ? ' and 3D' : ''})`, () => {
+    it(`R8: ${name} never retraces at φ = 0 (2D${ints.length > 2 ? ' and 3D' : ''})`, () => {
       for (const dims of ints.length > 2 ? [2, 3] : [2]) {
         for (const phi of PHIS) {
           const m = retraceMetric(closedCurve(ints, voiceOffsets(ints, phi), dims, N));
@@ -50,6 +52,20 @@ describe('R8: no retracing (G2.3)', () => {
       }
     });
   }
+
+  it('G3.2: the Y-voice offset is exactly δ₀ + φ (no clamp)', () => {
+    for (const phi of [0, 0.5, Math.PI, 5]) {
+      for (const ints of [[2, 3], [1, 2], [4, 5, 6], [32, 45]]) {
+        const d = voiceOffsets(ints, phi);
+        expect(d[0]).toBe(0);
+        ints.slice(1).forEach((b, i) => expect(d[i + 1]).toBe(midpointOffset(ints[0], b) + phi));
+      }
+    }
+  });
+
+  it('G3.2: 2:1 at the degenerate φ = π/2 really collapses into a retraced arc (metric < 1e-6)', () => {
+    expect(retraceMetric(closedCurve([1, 2], voiceOffsets([1, 2], Math.PI / 2), 2, N))).toBeLessThan(1e-6);
+  });
 
   it('R8: the 2:1 octave passes through the origin twice (a figure-8)', () => {
     const pts = closedCurve([1, 2], voiceOffsets([1, 2], 0), 2, N).slice(0, N);
