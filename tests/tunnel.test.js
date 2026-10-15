@@ -1,7 +1,7 @@
 // Phase 4: Waterfall Time Tunnel — pure core (ring buffer, depth/fade mapping, slices, clock).
 import { describe, it, expect } from 'vitest';
 import {
-  SliceRing, sliceZ, sliceAlpha, TunnelClock, buildSlice, decimate, SLICE_POINTS, CAPTURE_HZ
+  SliceRing, sliceZ, sliceAlpha, TunnelClock, buildSlice, decimate, SLICE_POINTS, CAPTURE_HZ, chordHue, densityOf, rgbHue
 } from '../src/visualizer/tunnelCore.js';
 import { Figure } from '../src/app/figure.js';
 import { presetChord, parseCustomRatio, chordFromMidiNotes } from '../src/core/voices.js';
@@ -146,11 +146,33 @@ describe('G4.7: slice content', () => {
     expect(sl.color).toEqual([0.18, 0.8, 0.44]);
   });
 
-  it('G4.7: the slice colour is a blend of the voice colours', () => {
-    const s = state(presetChord('fifth')); // #ff5376 + #ff9f43
+  // Phase 5 (G5.3) replaced the Phase 4 "average of the voice colours" rule: averages washed out
+  // toward white, so chord changes did not read as colour. Each chord now has its own saturated
+  // hue (same chord, same hue), dimmed by ratio density like the 2D phosphor (G5.2).
+  it('G5.3: the slice colour is the chord\'s own saturated hue, dimmed by ratio density', () => {
+    const s = state(presetChord('fifth'));
     const sl = buildSlice({ state: s, figure: fig(s), t: 0 });
-    const avg = [(0xff + 0xff) / 2, (0x53 + 0x9f) / 2, (0x76 + 0x43) / 2].map(v => v / 255);
-    sl.color.forEach((c, i) => expect(c).toBeCloseTo(avg[i], 6));
+    const [r, g, b] = sl.color;
+    expect(Math.max(r, g, b) - Math.min(r, g, b)).toBeGreaterThan(0.4); // saturated, not white
+    const hueOf = (c) => rgbHue(c);
+    expect(Math.abs(hueOf(sl.color) - chordHue(s.chord))).toBeLessThan(1);
+    // dense ratios are dimmer (45:32 vs 3:2)
+    const sT = state(parseCustomRatio('32:45').chord);
+    const dense = buildSlice({ state: sT, figure: fig(sT), t: 0 }).color;
+    expect(Math.max(...dense)).toBeLessThan(Math.max(...sl.color) * 0.6);
+    expect(densityOf([32, 45])).toBeCloseTo(4 / Math.sqrt(77), 9);
+    expect(densityOf([2, 3])).toBe(1);
+  });
+
+  it('G5.3: chords of the MIDI demo progression get hues ≥ 30° apart from their neighbours', () => {
+    const steps = [[60, 67], [60, 64], [60, 65], [60, 69], [60, 66], [60, 64, 67], [60, 63, 67], [60, 71], [60, 72], [60], [60, 64, 67, 72]];
+    const hues = steps.map(n => chordHue(chordFromMidiNotes(n.map(midi => ({ midi })))));
+    for (let i = 1; i < hues.length; i++) {
+      const d = Math.abs(hues[i] - hues[i - 1]) % 360;
+      expect(Math.min(d, 360 - d), `${i}`).toBeGreaterThanOrEqual(30);
+    }
+    // same chord, same hue (C-E-G and its octave-doubled voicing)
+    expect(hues[10]).toBe(hues[5]);
   });
 
   it(`captures at ${CAPTURE_HZ} Hz`, () => {

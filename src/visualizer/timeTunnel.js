@@ -56,15 +56,15 @@ function labelSprite(text, color) {
   canvas.height = 96;
   const ctx = canvas.getContext('2d');
   ctx.font = '700 54px "Space Grotesk", sans-serif';
-  ctx.textAlign = 'left';
+  ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = color;
-  ctx.fillText(text, 8, 48);
+  ctx.fillText(text, 256, 48);
   const tex = new THREE.CanvasTexture(canvas);
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false });
   const sprite = new THREE.Sprite(mat);
   sprite.scale.set(1.4, 0.26, 1);
-  sprite.center.set(0, 0.5);
+  sprite.center.set(0.5, 0); // centred above its ring
   return sprite;
 }
 
@@ -120,10 +120,14 @@ export class TimeTunnel {
     });
     this.lines = new THREE.LineSegments(geo, this.material);
     this.lines.frustumCulled = false;
+    // explicit draw order (the shader moves the slices, so depth sorting cannot): slices, then
+    // the front figure, then the marker rings and labels on top
+    this.lines.renderOrder = 1;
     this.group.add(this.lines);
 
     // The current figure, crisp and bright at the front of the tunnel
-    this.frontMat = new LineMaterial({ color: 0xffffff, linewidth: 2.2, transparent: true, opacity: 0.95, depthWrite: false, blending: THREE.AdditiveBlending });
+    // normal blending: crossings of a dense figure do not add up to white
+    this.frontMat = new LineMaterial({ color: 0xffffff, linewidth: 2.2, transparent: true, opacity: 0.95, depthWrite: false });
     const fg = new LineGeometry();
     fg.setPositions(new Float32Array(SLICE_POINTS * 3));
     this.front = new Line2(fg, this.frontMat);
@@ -133,6 +137,8 @@ export class TimeTunnel {
     this.frontHalo = new Line2(fg, this.frontHaloMat); // glow stand-in when bloom is off
     this.frontHalo.frustumCulled = false;
     this.frontHalo.visible = false;
+    this.frontHalo.renderOrder = 2;
+    this.front.renderOrder = 3;
     this.group.add(this.frontHalo, this.front);
 
     // faint axis guide along the depth
@@ -185,11 +191,19 @@ export class TimeTunnel {
   addMarker(title, color, birth) {
     const g = new THREE.Group();
     const pts = [];
-    for (let i = 0; i <= 96; i++) pts.push(new THREE.Vector3(Math.cos((i / 96) * Math.PI * 2) * 1.18, Math.sin((i / 96) * Math.PI * 2) * 1.18, 0));
-    const ringMat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.8, depthWrite: false, blending: THREE.AdditiveBlending });
-    g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), ringMat));
+    for (let i = 0; i <= 96; i++) pts.push(Math.cos((i / 96) * Math.PI * 2) * 1.18, Math.sin((i / 96) * Math.PI * 2) * 1.18, 0);
+    const ringGeo = new LineGeometry();
+    ringGeo.setPositions(pts);
+    // the ring carries the new chord's colour
+    const ringMat = new LineMaterial({ color, linewidth: 2.5, transparent: true, opacity: 0.9, depthWrite: false });
+    ringMat.resolution.copy(this.frontMat.resolution);
+    const ring = new Line2(ringGeo, ringMat);
+    ring.frustumCulled = false;
+    ring.renderOrder = 4;
+    g.add(ring);
     const sprite = labelSprite(title, `#${new THREE.Color(color).getHexString()}`);
-    sprite.position.set(-1.18, 1.32, 0);
+    sprite.position.set(0, 1.24, 0);
+    sprite.renderOrder = 5;
     g.add(sprite);
     this.group.add(g);
     const marker = { group: g, birth, title, ringMat, spriteMat: sprite.material };
@@ -224,8 +238,10 @@ export class TimeTunnel {
     this.now = now;
 
     let captured = null;
-    // the clearing frame shows an empty tunnel; capturing resumes on the next frame
-    if (!tun.cleared && now - this.lastCapture >= 1 / CAPTURE_HZ - 1e-9) {
+    const titleChanged = tun.title !== this.lastTitle;
+    // the clearing frame shows an empty tunnel; capturing resumes on the next frame. A chord
+    // change is captured at once, so its marker sits exactly where the new shape starts.
+    if (!tun.cleared && (titleChanged || now - this.lastCapture >= 1 / CAPTURE_HZ - 1e-9)) {
       const slice = tun.makeSlice();
       if (slice) {
         const slot = this.ring.push(slice.points, slice.color, now);
@@ -235,14 +251,18 @@ export class TimeTunnel {
         const fp = new Float32Array(slice.points.length * 3);
         slice.points.forEach((p, i) => { fp[i * 3] = p[0]; fp[i * 3 + 1] = p[1]; });
         this.front.geometry.setPositions(fp);
-        this.frontMat.color.setRGB(...slice.color.map(c => Math.min(1, c * 0.6 + 0.45)));
-        this.frontHaloMat.color.setRGB(...slice.color);
+        // density normalization (as in 2D): dense ratios get a thinner, dimmer front figure
+        const d = slice.density ?? 1;
+        this.frontMat.color.setRGB(...(slice.front || slice.color));
+        this.frontMat.linewidth = 2.2 * (0.5 + 0.5 * d);
+        this.frontHaloMat.color.setRGB(...(slice.front || slice.color));
+        this.frontHaloMat.opacity = 0.16 * d;
         this.front.visible = true;
       }
     }
     // a chord change leaves a labelled ring at the depth where it happened
-    if (tun.title !== this.lastTitle) {
-      this.addMarker(tun.title, captured ? new THREE.Color(...captured.color) : 0xffffff, now);
+    if (titleChanged) {
+      this.addMarker(tun.title, captured ? new THREE.Color(...(captured.front || captured.color)) : 0xffffff, now);
       this.lastTitle = tun.title;
     }
 
@@ -256,7 +276,7 @@ export class TimeTunnel {
       }
       m.group.position.z = sliceZ(m.birth, now, this.speed);
       const a = sliceAlpha(age, H);
-      m.ringMat.opacity = 0.85 * a;
+      m.ringMat.opacity = Math.min(1, 1.25 * a); // opaque while recent, then fading
       m.spriteMat.opacity = a;
       return true;
     });

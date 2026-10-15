@@ -55,6 +55,14 @@ export function initPanel(store, actions) {
 
   // Root Hz, acoustic zone and the time-scale readout ("real time" / "slowed ×N")
   store.subscribe(s => [s.chord, s.tuning, s.speedVal, s.tClose], (_, s) => {
+    if (s.chord.source === 'xy') {
+      // an audio signal has no root frequency: its samples are drawn as they play
+      valSpeed.textContent = 'X-Y audio signal';
+      valSpeed.style.color = '#2ecc71';
+      valSlowmo.textContent = 'real time (audio)';
+      valSlowmo.style.color = '#2ecc71';
+      return;
+    }
     const hz = rootHz(s);
     if (hz < 20) {
       valSpeed.textContent = `${hz.toFixed(1)} Hz (Polyrhythm Clicks)`;

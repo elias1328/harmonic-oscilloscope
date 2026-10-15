@@ -41,7 +41,10 @@ const GATES = {
   'G4.3': 'Time Tunnel toggle: 2D -> 3D with the tunnel; media loading only suggests it',
   'G4.6': 'the tunnel follows the media clock: pause freezes uNow, seek and eject clear, wall clock without media',
   'G4.8': 'MIDI demo: one marker per header-title change, labelled with that title',
-  'G4.9': 'MIDI demo: slices span ≥ 50% of the depth after 5 s; median fps at 20 s ≥ 0.85 × at 2 s (tunnel on)'
+  'G4.9': 'MIDI demo: slices span ≥ 50% of the depth after 5 s; median fps at 20 s ≥ 0.85 × at 2 s (tunnel on)',
+  'G5.2': 'tunnel density: during the 45:32 step < 15% of the front figure box has luminance > 240',
+  'G5.3': 'tunnel colour: mean chroma of lit pixels ≥ 40 at ~10 s; consecutive marker rings differ in hue by ≥ 30°',
+  'G5.4': 'Slow-mo readout during X-Y audio: real time, no root Hz claimed'
 };
 const gates = Object.fromEntries(Object.entries(GATES).map(([id, desc]) => [id, { desc, pass: null, details: [] }]));
 const gateResult = (id, ok, detail) => {
@@ -115,6 +118,66 @@ await page.addInitScript(() => {
   window.__liveTones = () => window.__osc.filter(r => isLive(r) && !isClick(r)).map(r => ({ f: +r.o.frequency.value.toFixed(2), gain: pathGain(r.o) }));
   window.__fps = (ms) => new Promise(res => { let n = 0; const t0 = performance.now(); const f = () => { n++; performance.now() - t0 < ms ? requestAnimationFrame(f) : res(n * 1000 / (performance.now() - t0)); }; requestAnimationFrame(f); });
   window.__nextFrame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  // G5.2 / G5.3: pixel analysis of a same-tick 3D snapshot of the tunnel
+  window.__tunnelPixels = async () => {
+    const v = window.__harmonic.visualizer3D;
+    const url = v.snapshot();
+    const img = new Image();
+    await new Promise(r => { img.onload = r; img.src = url; });
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    const x = c.getContext('2d');
+    x.drawImage(img, 0, 0);
+    const W = c.width, H = c.height;
+    const d = x.getImageData(0, 0, W, H).data;
+    const sx = W / window.innerWidth, sy = H / window.innerHeight;
+    v.camera.updateMatrixWorld();
+    const V3 = v.camera.position.constructor;
+    const toPx = (X, Y, Z) => { const p = new V3(X, Y, Z).project(v.camera); return [(p.x + 1) / 2 * W, (1 - p.y) / 2 * H]; };
+    const lum = (i) => 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+    const hue = (i) => {
+      const r = d[i], g = d[i + 1], b = d[i + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b), k = mx - mn;
+      if (!k) return null;
+      let h = mx === r ? ((g - b) / k) % 6 : mx === g ? (b - r) / k + 2 : (r - g) / k + 4;
+      h *= 60; return h < 0 ? h + 360 : h;
+    };
+    // front figure bounding box (the current slice lies in [-1,1]² at z = 0)
+    const corners = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([a, b]) => toPx(a, b, 0));
+    const bx0 = Math.max(0, Math.floor(Math.min(...corners.map(p => p[0])))), bx1 = Math.min(W, Math.ceil(Math.max(...corners.map(p => p[0]))));
+    const by0 = Math.max(0, Math.floor(Math.min(...corners.map(p => p[1])))), by1 = Math.min(H, Math.ceil(Math.max(...corners.map(p => p[1]))));
+    let inBox = 0, hot = 0;
+    for (let y = by0; y < by1; y++) for (let X = bx0; X < bx1; X++) { const i = (y * W + X) * 4; inBox++; if (lum(i) > 240) hot++; }
+    // chroma of all lit tunnel pixels
+    let lit = 0, chroma = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (lum(i) > 30) { lit++; chroma += Math.max(d[i], d[i + 1], d[i + 2]) - Math.min(d[i], d[i + 1], d[i + 2]); }
+    }
+    // mean hue along the two newest marker rings
+    const ringHue = (m) => {
+      let sxs = 0, sys = 0, n = 0;
+      for (let k = 0; k < 360; k++) {
+        const a = (k / 360) * Math.PI * 2;
+        const [px, py] = toPx(Math.cos(a) * 1.18, Math.sin(a) * 1.18, m.group.position.z);
+        {
+          // the ring line itself: the brightest pixel within ±2 px of the projected ring point
+          let i = -1, best = 20;
+          for (let oy = -2; oy <= 2; oy++) for (let ox = -2; ox <= 2; ox++) {
+            const X = Math.round(px) + ox, Y = Math.round(py) + oy;
+            if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
+            const j = (Y * W + X) * 4;
+            if (lum(j) > best) { best = lum(j); i = j; }
+          }
+          if (i < 0) continue;
+          const h = hue(i);
+          if (h === null) continue;
+          sxs += Math.cos(h * Math.PI / 180); sys += Math.sin(h * Math.PI / 180); n++;
+        }
+      }
+      return n ? { hue: (Math.atan2(sys, sxs) * 180 / Math.PI + 360) % 360, n, title: m.title } : { hue: null, n, title: m.title };
+    };
+    const ms = v.tunnel.markers.slice(-2).map(ringHue);
+    return { hotFrac: hot / Math.max(1, inBox), box: [bx0, by0, bx1, by1].map(Math.round), lit, chroma: lit ? chroma / lit : 0, rings: ms, scale: [sx, sy] };
+  };
   // G4.2: robust fps = median of 3 consecutive 1 s windows
   window.__fpsMedian = async () => {
     const w = [];
@@ -520,7 +583,20 @@ await section('time tunnel', ['G4.3', 'G4.6', 'G4.8', 'G4.9'], async () => {
   await page.waitForFunction(() => window.__harmonic.mediaImporter.currentTime >= 5, null, { timeout: 60000 });
   const s5 = await st();
   gateResult('G4.9', s5.span >= 0.5 * s5.depth, `after 5 s of MIDI playback: ${s5.count} slices spanning ${s5.span.toFixed(2)} of ${s5.depth.toFixed(2)} depth units (${(100 * s5.span / s5.depth).toFixed(0)}%)`);
-  await page.waitForFunction(() => window.__harmonic.mediaImporter.currentTime >= 9.5, null, { timeout: 60000 });
+  // G5.2 during the 45:32 step (8–10 s of the demo)
+  await page.waitForFunction(() => window.__harmonic.mediaImporter.currentTime >= 8.8, null, { timeout: 60000 });
+  const px1 = await page.evaluate(() => window.__tunnelPixels());
+  const ringDiff = (r) => { if (r.length < 2 || r[0].hue === null || r[1].hue === null) return null; const d = Math.abs(r[0].hue - r[1].hue) % 360; return Math.min(d, 360 - d); };
+  gateResult('G5.2', px1.hotFrac < 0.15, `45:32 step: ${(100 * px1.hotFrac).toFixed(1)}% of the front figure box [${px1.box.join(',')}] above luminance 240`);
+  await shot('20-tunnel-midi-tritone');
+  const d1 = ringDiff(px1.rings);
+  gateResult('G5.3', d1 !== null && d1 >= 30, `rings ${px1.rings.map(r => `${r.title} ${r.hue === null ? '-' : r.hue.toFixed(0) + '°'}`).join(' vs ')}: ${d1 === null ? 'n/a' : d1.toFixed(0) + '°'} apart`);
+  // G5.3 at about 10 s
+  await page.waitForFunction(() => window.__harmonic.mediaImporter.currentTime >= 10.3, null, { timeout: 60000 });
+  const px2 = await page.evaluate(() => window.__tunnelPixels());
+  const d2 = ringDiff(px2.rings);
+  gateResult('G5.3', px2.chroma >= 40, `at ~10 s: mean chroma ${px2.chroma.toFixed(1)} over ${px2.lit} lit pixels`);
+  gateResult('G5.3', d2 !== null && d2 >= 30, `rings ${px2.rings.map(r => `${r.title} ${r.hue === null ? '-' : r.hue.toFixed(0) + '°'}`).join(' vs ')}: ${d2 === null ? 'n/a' : d2.toFixed(0) + '°'} apart`);
   await shot('20-tunnel-midi-10s');
   await wait(Math.max(0, 18500 - (Date.now() - t0)));
   const fB = await page.evaluate(() => window.__fpsMedian());
@@ -652,6 +728,8 @@ await section('audio demo', ['G1.1', 'G1.5', 'G1.6', 'G1.7', 'G1.8'], async () =
   await page.click('#btn-demo-audio'); await wait(1200);
   log('audio demo: X-Y mode selector visible', await visible('#player-audio-mode-selector'));
   log('audio demo: header STEREO VECTORSCOPE', (await txt('#header-category')) === 'STEREO VECTORSCOPE');
+  const slow = await txt('#val-slowmo'), spd = await txt('#val-speed'), ac = await txt('#info-acoustic-mode');
+  gateResult('G5.4', /real time/i.test(slow) && !/\d\s*Hz/i.test(spd) && !/\d\s*Hz/i.test(ac), `X-Y audio: slow-mo "${slow}", speed "${spd}", acoustic "${ac}"`);
   const live = await page.evaluate(() => window.__live());
   const drone = await page.evaluate(() => window.__harmonic.audio.voices.length);
   gateResult('G1.1', drone === 0 && !live.some(f => Math.abs(f - 261.63) < 0.05 || Math.abs(f - 392.44) < 0.05), `audio demo: drone voices=${drone}, live oscillators ${JSON.stringify(live)}`);

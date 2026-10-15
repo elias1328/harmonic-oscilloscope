@@ -3,6 +3,7 @@
 // and the tunnel's clock.
 
 import { closedCurve, makeProjector, project } from '../render/lissajous.js';
+import { identifyChord, INTERVALS_BY_SEMITONE } from '../math/harmonics.js';
 
 export const SLICE_POINTS = 256;
 export const CAPTURE_HZ = 30;
@@ -124,30 +125,80 @@ export function decimate(win, n = SLICE_POINTS) {
   return out;
 }
 
-const hexToRgb = (hex) => {
-  const c = parseInt(String(hex || '#ffffff').replace('#', ''), 16);
-  return [((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255];
+// Each kind of interval or chord has its own hue (same chord, same colour), spread so that the
+// neighbours of a typical progression are clearly different.
+const HUES = {
+  unison: 48, solo: 200, octave: 0, fifth: 28, fourth: 210, 'major sixth': 95, 'major third': 140,
+  'minor third': 255, 'minor sixth': 292, 'minor seventh': 320, 'major second': 172,
+  'major seventh': 230, 'minor second': 345, tritone: 186,
+  major: 42, minor: 280, sus4: 196, sus2: 160, dominant7: 12, minor7: 305, major7: 118,
+  diminished: 332, augmented: 248, cluster: 352, custom: 62
 };
+
+/** Hue (degrees) of a chord, from its interval class or chord quality. */
+export function chordHue(chord) {
+  const semis = chord.voices.map(v => v.semitones);
+  let key = 'custom';
+  if (semis.length === 1) key = 'solo';
+  else if (semis.length === 2) {
+    const diff = Math.abs(semis[1] - semis[0]);
+    const r = diff % 12;
+    key = r === 0 ? (diff === 0 ? 'unison' : 'octave') : INTERVALS_BY_SEMITONE[r].name.toLowerCase();
+  } else if (semis.length > 2) {
+    key = identifyChord(semis).quality || 'custom';
+  }
+  return HUES[key] ?? HUES.custom;
+}
+
+/** Brightness normalization for dense ratios (as in the 2D phosphor): 1 up to Σ = 16. */
+export function densityOf(ratioInts) {
+  return Math.min(1, 4 / Math.sqrt(ratioInts.reduce((s, r) => s + r, 0)));
+}
+
+export function hslToRgb(h, sat, l) {
+  const k = (n) => (n + h / 30) % 12;
+  const a = sat * Math.min(l, 1 - l);
+  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return [f(0), f(8), f(4)];
+}
+
+/** Hue in degrees of an RGB triple (0–1). */
+export function rgbHue([r, g, b]) {
+  const max = Math.max(r, g, b);
+  const d = max - Math.min(r, g, b);
+  if (!d) return 0;
+  let h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h *= 60;
+  return h < 0 ? h + 360 : h;
+}
+
+/** Saturated colour of a chord, scaled by its ratio density. */
+export function chordColor(chord, ratioInts) {
+  const d = densityOf(ratioInts);
+  return hslToRgb(chordHue(chord), 0.9, 0.56).map(c => c * d);
+}
 
 /**
  * What one slice shows:
  * - audio (X-Y): the current X-Y window, decimated;
  * - a just-intonation or MIDI chord: one exact closed period (the chord's shape);
  * - a manual chord in 12-TET: a 1/f_fund window of the real, precessing motion from now.
- * Colour: the average of the voice colours.
+ * Colour: the chord's own hue (chordHue), dimmed for dense ratios (densityOf).
  */
 export function buildSlice({ state, figure, t, xyPoints }) {
   const { chord } = state;
   if (chord.source === 'xy') {
     if (!xyPoints || !xyPoints.length) return null;
-    return { points: decimate(xyPoints), color: XY_COLOR, window: 0 };
+    return { points: decimate(xyPoints), color: XY_COLOR, front: [0.5, 1, 0.65], density: 1, window: 0 };
   }
   if (!figure || !figure.size) return null;
-  const rgb = chord.voices.map(v => hexToRgb(v.color));
-  const color = [0, 1, 2].map(j => rgb.reduce((s, c) => s + c[j], 0) / rgb.length);
+  const color = chordColor(chord, figure.ratioInts);
+  const density = densityOf(figure.ratioInts);
+  // the front figure: the same hue, a little lighter, also dimmed for dense ratios
+  const front = hslToRgb(chordHue(chord), 0.9, 0.56).map(c => c * (0.5 + 0.5 * density));
   const P = SLICE_POINTS;
   if (figure.closed || chord.source !== 'manual') {
-    return { points: closedCurve(figure.ratioInts, figure.deltas, 2, P - 1).map(p => [p[0], p[1]]), color, window: figure.period };
+    return { points: closedCurve(figure.ratioInts, figure.deltas, 2, P - 1).map(p => [p[0], p[1]]), color, front, density, window: figure.period };
   }
   const proj = makeProjector(figure.size, 2);
   const th0 = figure.phasesAt(t);
@@ -159,5 +210,5 @@ export function buildSlice({ state, figure, t, xyPoints }) {
     const p = project(th0.map((ph, j) => ph + w[j] * dt), proj);
     points.push([p[0], p[1]]);
   }
-  return { points, color, window: T };
+  return { points, color, front, density, window: T };
 }

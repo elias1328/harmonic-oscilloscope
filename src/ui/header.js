@@ -70,7 +70,10 @@ export function initHeader(store) {
     description.textContent = chord.meta.description;
 
     const hz = rootHz(s);
-    if (hz < 20) {
+    if (chord.source === 'xy') {
+      acoustic.textContent = '📡 Stereo signal: every sample is drawn in real time as it plays (no slow motion).';
+      acoustic.style.borderLeftColor = '#2ecc71';
+    } else if (hz < 20) {
       acoustic.textContent = `🥁 Rhythmic Mode (${hz.toFixed(1)} Hz): Ears resolve separate mechanical pulses/clicks.`;
       acoustic.style.borderLeftColor = '#ff7f50';
     } else if (hz <= 30) {

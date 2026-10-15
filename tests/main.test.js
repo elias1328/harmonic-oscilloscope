@@ -364,3 +364,24 @@ describe('Phase 4: Time Tunnel in the app', () => {
     expect(t.stats().count).toBeGreaterThan(10);
   });
 });
+
+describe('G5.4: Slow-mo readout in every mode', () => {
+  it('G5.4: during X-Y audio the readout says real time and claims no root Hz', async () => {
+    h.click('#btn-demo-audio');
+    await new Promise(r => setTimeout(r, 0));
+    h.frames(3);
+    expect(text('#val-slowmo')).toMatch(/real time/i);
+    expect(text('#val-speed')).not.toMatch(/\d\s*Hz/);
+    expect(text('#info-acoustic-mode')).not.toMatch(/\d\s*Hz/);
+    expect(text('#info-acoustic-mode')).toMatch(/real time/i);
+  });
+
+  it('G5.4: during MIDI the readout follows the real chord (not the slider)', () => {
+    h.click('#btn-demo-midi'); h.frames(30); // C4 + G4 at real pitch
+    expect(text('#val-speed')).toMatch(/^261\.6 Hz/);
+    expect(text('#val-slowmo')).toMatch(/^slowed ×\d+/);
+    // the speed slider does not change a media chord's readout
+    const s = h.$('#slider-speed'); s.value = 20; s.dispatchEvent(new Event('input', { bubbles: true })); h.flush();
+    expect(text('#val-speed')).toMatch(/^261\.6 Hz/);
+  });
+});

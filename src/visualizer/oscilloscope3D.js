@@ -359,6 +359,12 @@ export class Oscilloscope3D {
     const interval = this.lastFrameStart ? start - this.lastFrameStart : 0;
     this.lastFrameStart = start;
     this.setMode(frame.tunnel && frame.tunnel.on ? 'tunnel' : 'figure');
+    if (this.bloomPass) {
+      // the tunnel stacks many slices: a gentler, higher-threshold glow keeps their colours
+      this.bloomPass.strength = this.mode === 'tunnel' ? 0.35 : 0.7;
+      this.bloomPass.radius = this.mode === 'tunnel' ? 0.2 : 0.4;
+      this.bloomPass.threshold = this.mode === 'tunnel' ? 0.45 : 0.12;
+    }
     this.updateCamera();
     if (this.mode === 'tunnel') {
       if (frame.tunnel.speed !== undefined && frame.tunnel.speed !== this.tunnel.speed) this.tunnel.setSpeed(frame.tunnel.speed);
