@@ -2,6 +2,7 @@
 
 import { CHORD_PRESETS, INTERVALS_SIMPLEST_FIRST, INTERVALS_BY_SEMITONE, identifyChordFromIntervals, NOTE_COLORS, NOTE_NAMES, noteNameToSemitone, simplifyRatio } from './math/harmonics.js';
 import { AudioEngine } from './audio/audioEngine.js';
+import { MediaImporter } from './audio/mediaImporter.js';
 import { Oscilloscope2D } from './visualizer/oscilloscope2D.js';
 import { Oscilloscope3D } from './visualizer/oscilloscope3D.js';
 import { IntervalsGrid } from './visualizer/intervalsGrid.js';
@@ -27,7 +28,12 @@ const state = {
   tuning: 'just', // 'just' | 'equal'
   is12TET: false,
   isMuted: false,
-  drawMode: 'live' // 'live' | 'full'
+  drawMode: 'live', // 'live' | 'full'
+  isMediaActive: false,
+  mediaType: null, // 'midi' | 'audio'
+  audioMode: 'xy', // 'xy' | 'pitch'
+  xyPoints: null,
+  mediaInfo: null
 };
 
 // Initialize Audio Engine
@@ -63,6 +69,30 @@ const btnApplyRatio = document.getElementById('btn-apply-ratio');
 const pianoContainer = document.getElementById('piano-keyboard');
 const btnClearPiano = document.getElementById('btn-clear-piano');
 const waveformCanvas = document.getElementById('waveform-canvas');
+
+// Media Player & Importer Elements
+const mediaImporter = new MediaImporter(audio);
+const btnImportMedia = document.getElementById('btn-import-media');
+const fileMediaInput = document.getElementById('file-media-input');
+const btnSideImport = document.getElementById('btn-side-import');
+const btnDemoMidi = document.getElementById('btn-demo-midi');
+const btnDemoAudio = document.getElementById('btn-demo-audio');
+
+const mediaPlayerBar = document.getElementById('media-player-bar');
+const playerTrackIcon = document.getElementById('player-track-icon');
+const playerTrackTitle = document.getElementById('player-track-title');
+const playerTrackMeta = document.getElementById('player-track-meta');
+const btnPlayerStop = document.getElementById('btn-player-stop');
+const btnPlayerPlay = document.getElementById('btn-player-play');
+const btnPlayerLoop = document.getElementById('btn-player-loop');
+const playerScrubber = document.getElementById('player-scrubber');
+const playerTimeCurrent = document.getElementById('player-time-current');
+const playerTimeTotal = document.getElementById('player-time-total');
+const playerAudioModeSelector = document.getElementById('player-audio-mode-selector');
+const btnAudioModeXy = document.getElementById('btn-audio-mode-xy');
+const btnAudioModePitch = document.getElementById('btn-audio-mode-pitch');
+const btnPlayerEject = document.getElementById('btn-player-eject');
+const dropOverlay = document.getElementById('drop-overlay');
 
 // Harmonic Info Elements
 const infoConsonanceBadge = document.getElementById('info-consonance-badge');
@@ -108,6 +138,13 @@ function buildPresetsUI() {
 }
 
 function loadPreset(preset) {
+  if (state.isMediaActive) {
+    mediaImporter.pause();
+    state.isMediaActive = false;
+    state.xyPoints = null;
+    if (mediaPlayerBar) mediaPlayerBar.classList.add('hidden');
+  }
+
   state.activePresetId = preset.id;
   state.category = preset.category;
   state.title = preset.title;
@@ -334,6 +371,12 @@ function buildPianoUI() {
 
 function togglePianoNote(noteName) {
   audio.resume();
+  if (state.isMediaActive) {
+    mediaImporter.pause();
+    state.isMediaActive = false;
+    state.xyPoints = null;
+    if (mediaPlayerBar) mediaPlayerBar.classList.add('hidden');
+  }
   const idx = selectedPianoNotes.indexOf(noteName);
   if (idx > -1) {
     // Allow deselecting ANY note, including C!
@@ -586,6 +629,12 @@ inputCustomRatio.addEventListener('keydown', (e) => {
 
 function applyCustomRatio() {
   audio.resume();
+  if (state.isMediaActive) {
+    mediaImporter.pause();
+    state.isMediaActive = false;
+    state.xyPoints = null;
+    if (mediaPlayerBar) mediaPlayerBar.classList.add('hidden');
+  }
   const raw = inputCustomRatio.value.trim();
   if (!raw) return;
 
@@ -648,6 +697,252 @@ btnSnapshot.addEventListener('click', () => {
   link.click();
 });
 
+// ----------------------------------------------------
+// MEDIA IMPORTER & PLAYER BINDINGS (MIDI & MP3)
+// ----------------------------------------------------
+function formatTime(sec) {
+  if (isNaN(sec) || sec < 0) return '00:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+async function loadMediaFile(file) {
+  audio.resume();
+  try {
+    await mediaImporter.loadFile(file);
+  } catch (err) {
+    alert(err.message || 'Error loading media file');
+  }
+}
+
+function ejectMedia() {
+  mediaImporter.stop();
+  state.isMediaActive = false;
+  state.mediaType = null;
+  state.xyPoints = null;
+  if (mediaPlayerBar) mediaPlayerBar.classList.add('hidden');
+  loadPreset(CHORD_PRESETS[0]);
+}
+
+// MediaImporter Callbacks
+mediaImporter.onLoaded = (info) => {
+  state.isMediaActive = true;
+  state.mediaType = info.type;
+  state.mediaInfo = info;
+  if (mediaPlayerBar) mediaPlayerBar.classList.remove('hidden');
+
+  if (playerTrackIcon) playerTrackIcon.textContent = info.type === 'midi' ? '🎹' : '🎵';
+  if (playerTrackTitle) playerTrackTitle.textContent = info.name;
+  if (playerTrackMeta) {
+    if (info.type === 'midi') {
+      playerTrackMeta.textContent = `MIDI • ${info.tracksCount || 1} Tracks • ${info.bpm || 120} BPM • ${info.noteCount || 0} Notes`;
+      if (playerAudioModeSelector) playerAudioModeSelector.style.display = 'none';
+      state.audioMode = 'midi';
+    } else {
+      playerTrackMeta.textContent = `Audio • ${info.channels} Channel(s) • ${(info.sampleRate / 1000).toFixed(1)} kHz`;
+      if (playerAudioModeSelector) playerAudioModeSelector.style.display = 'flex';
+      state.audioMode = 'xy';
+      if (btnAudioModeXy) btnAudioModeXy.classList.add('active');
+      if (btnAudioModePitch) btnAudioModePitch.classList.remove('active');
+    }
+  }
+
+  if (playerTimeCurrent) playerTimeCurrent.textContent = '00:00';
+  if (playerTimeTotal) playerTimeTotal.textContent = formatTime(info.duration);
+  if (playerScrubber) playerScrubber.value = 0;
+  if (btnPlayerPlay) btnPlayerPlay.textContent = '⏸';
+
+  // Stop manual drone voices while media plays
+  audio.stopVoices();
+  mediaImporter.play();
+};
+
+mediaImporter.onPlaybackUpdate = (current, total, isPlaying) => {
+  if (playerTimeCurrent) playerTimeCurrent.textContent = formatTime(current);
+  if (playerTimeTotal) playerTimeTotal.textContent = formatTime(total);
+  if (playerScrubber && total > 0) {
+    playerScrubber.value = (current / total) * 100;
+  }
+  if (btnPlayerPlay) btnPlayerPlay.textContent = isPlaying ? '⏸' : '▶';
+};
+
+mediaImporter.onMidiStateChange = (activeNotes, ratioInfo) => {
+  if (!state.isMediaActive || state.mediaType !== 'midi' || !ratioInfo) return;
+
+  state.category = ratioInfo.category;
+  state.title = ratioInfo.title;
+  state.notes = [...ratioInfo.notes];
+  state.ratioInts = [...ratioInfo.ratioInts];
+  state.ratios = [...ratioInfo.ratios];
+  state.colors = [...ratioInfo.colors];
+  state.consonance = ratioInfo.consonance;
+  state.description = ratioInfo.description;
+
+  updateHeader();
+  updateHarmonicInfo();
+
+  // Highlight active notes on interactive piano keyboard
+  const activeNames = activeNotes.map(n => n.pitchClass);
+  const keys = pianoContainer.querySelectorAll('.piano-key-white, .piano-key-black');
+  keys.forEach(k => {
+    if (activeNames.includes(k.dataset.note)) {
+      k.classList.add('active');
+    } else {
+      k.classList.remove('active');
+    }
+  });
+};
+
+mediaImporter.onAudioStateChange = (res) => {
+  if (!state.isMediaActive || state.mediaType !== 'audio') return;
+  state.xyPoints = res.xyPoints;
+
+  if (state.audioMode === 'xy') {
+    state.category = 'STEREO VECTORSCOPE';
+    state.title = 'CH 1 (L) : CH 2 (R)';
+    state.consonance = 'Hardware Lissajous Trace';
+    state.description = 'Direct X-Y channel electron beam trace. Left audio channel drives horizontal X-axis; right channel drives vertical Y-axis.';
+    updateHeader();
+    updateHarmonicInfo();
+  } else if (state.audioMode === 'pitch' && res.pitchInfo) {
+    const p = res.pitchInfo;
+    state.category = `DETECTED PITCH (${p.fullName})`;
+    state.title = `${p.frequency.toFixed(1)} Hz`;
+    state.consonance = `${p.cents >= 0 ? '+' : ''}${p.cents} Cents`;
+    state.description = `Real-time autocorrelation pitch extraction from audio stream. Frequency: ${p.frequency.toFixed(2)} Hz.`;
+    state.notes = [p.note];
+    state.ratioInts = [1];
+    state.colors = [NOTE_COLORS[p.note] || '#2ecc71'];
+    updateHeader();
+    updateHarmonicInfo();
+  }
+};
+
+// Top nav and side import buttons
+if (btnImportMedia) {
+  btnImportMedia.addEventListener('click', () => {
+    audio.resume();
+    fileMediaInput.click();
+  });
+}
+if (btnSideImport) {
+  btnSideImport.addEventListener('click', () => {
+    audio.resume();
+    fileMediaInput.click();
+  });
+}
+if (fileMediaInput) {
+  fileMediaInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      await loadMediaFile(file);
+      fileMediaInput.value = '';
+    }
+  });
+}
+
+// Built-in Demo buttons
+if (btnDemoMidi) {
+  btnDemoMidi.addEventListener('click', () => {
+    audio.resume();
+    mediaImporter.loadBuiltInMidiDemo();
+  });
+}
+if (btnDemoAudio) {
+  btnDemoAudio.addEventListener('click', () => {
+    audio.resume();
+    mediaImporter.loadBuiltInOscilloscopeDemo();
+  });
+}
+
+// Full-screen Drag and Drop support
+window.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  if (dropOverlay) dropOverlay.classList.add('drag-active');
+});
+
+window.addEventListener('dragleave', (e) => {
+  if (e.relatedTarget === null && dropOverlay) {
+    dropOverlay.classList.remove('drag-active');
+  }
+});
+
+window.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  if (dropOverlay) dropOverlay.classList.remove('drag-active');
+  if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+    const file = e.dataTransfer.files[0];
+    await loadMediaFile(file);
+  }
+});
+
+// Player Controls
+if (btnPlayerPlay) {
+  btnPlayerPlay.addEventListener('click', () => {
+    if (mediaImporter.isPlaying) {
+      mediaImporter.pause();
+    } else {
+      mediaImporter.play();
+    }
+  });
+}
+
+if (btnPlayerStop) {
+  btnPlayerStop.addEventListener('click', () => {
+    mediaImporter.stop();
+  });
+}
+
+if (btnPlayerLoop) {
+  btnPlayerLoop.addEventListener('click', () => {
+    const nextLoop = !mediaImporter.isLooping;
+    mediaImporter.setLoop(nextLoop);
+    btnPlayerLoop.classList.toggle('active', nextLoop);
+  });
+}
+
+if (playerScrubber) {
+  playerScrubber.addEventListener('input', (e) => {
+    const pct = parseFloat(e.target.value) / 100;
+    if (mediaImporter.currentMedia) {
+      mediaImporter.seek(pct * mediaImporter.currentMedia.duration);
+    }
+  });
+}
+
+document.querySelectorAll('.speed-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    mediaImporter.setPlaybackRate(parseFloat(btn.dataset.speed));
+  });
+});
+
+if (btnAudioModeXy) {
+  btnAudioModeXy.addEventListener('click', () => {
+    state.audioMode = 'xy';
+    mediaImporter.audioMode = 'xy';
+    btnAudioModeXy.classList.add('active');
+    if (btnAudioModePitch) btnAudioModePitch.classList.remove('active');
+  });
+}
+
+if (btnAudioModePitch) {
+  btnAudioModePitch.addEventListener('click', () => {
+    state.audioMode = 'pitch';
+    mediaImporter.audioMode = 'pitch';
+    btnAudioModePitch.classList.add('active');
+    if (btnAudioModeXy) btnAudioModeXy.classList.remove('active');
+  });
+}
+
+if (btnPlayerEject) {
+  btnPlayerEject.addEventListener('click', () => {
+    ejectMedia();
+  });
+}
+
 // Window resize handling
 function handleResize() {
   const w = window.innerWidth;
@@ -665,6 +960,11 @@ function animate(currentTime) {
 
   const delta = (currentTime - lastFrameTime) * 0.001;
   lastFrameTime = currentTime;
+
+  // Update media playback frame if active (MIDI notes & MP3 stereo samples)
+  if (state.isMediaActive) {
+    mediaImporter.update();
+  }
 
   // Visual simulation speed based on current Hertz
   let visualSpeed = 1.0;

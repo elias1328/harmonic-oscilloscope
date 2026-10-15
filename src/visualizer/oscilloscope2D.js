@@ -43,6 +43,12 @@ export class Oscilloscope2D {
     const w = this.width;
     const h = this.height;
 
+    // If in audio X-Y vectorscope mode (MP3/Audio files)
+    if (state.audioMode === 'xy' && state.xyPoints && state.xyPoints.length > 0) {
+      this.renderXYVectorscope(state);
+      return;
+    }
+
     // Clear background
     ctx.fillStyle = '#08090c';
     ctx.fillRect(0, 0, w, h);
@@ -340,6 +346,90 @@ export class Oscilloscope2D {
     } else {
       ctx.fillText(label, x - 18, y + 18);
     }
+    ctx.restore();
+  }
+
+  // Dedicated hardware X-Y CRT Oscilloscope vectorscope renderer (Oscilloscope Music & Stereo Audio)
+  renderXYVectorscope(state) {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+
+    // Deep CRT black
+    ctx.fillStyle = '#08090c';
+    ctx.fillRect(0, 0, w, h);
+
+    const centerX = w * 0.52;
+    const centerY = h * 0.54;
+    const scopeSize = Math.min(w, h) * 0.68;
+    const halfScope = scopeSize * 0.5;
+
+    // Oscilloscope circular graticule & reticle
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
+    ctx.lineWidth = 1;
+    [0.25, 0.5, 0.75, 1.0].forEach(r => {
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, halfScope * 0.88 * r, 0, Math.PI * 2);
+      ctx.stroke();
+    });
+
+    // Crosshairs
+    ctx.beginPath();
+    ctx.moveTo(centerX - halfScope * 0.88, centerY);
+    ctx.lineTo(centerX + halfScope * 0.88, centerY);
+    ctx.moveTo(centerX, centerY - halfScope * 0.88);
+    ctx.lineTo(centerX, centerY + halfScope * 0.88);
+    ctx.stroke();
+
+    // Labels
+    ctx.font = '11px "Space Grotesk", sans-serif';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.textAlign = 'right';
+    ctx.fillText('CH 1: LEFT [X]', centerX + halfScope * 0.88, centerY + 14);
+    ctx.textAlign = 'center';
+    ctx.fillText('CH 2: RIGHT [Y]', centerX, centerY - halfScope * 0.88 - 8);
+    ctx.restore();
+
+    const pts = state.xyPoints;
+    if (!pts || pts.length === 0) return;
+
+    // Glowing phosphor trace
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // 1. Broad phosphor glow aura
+    ctx.beginPath();
+    for (let i = 0; i < pts.length; i++) {
+      const px = centerX + pts[i].x * halfScope * 0.85;
+      const py = centerY - pts[i].y * halfScope * 0.85;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.shadowColor = '#2ecc71';
+    ctx.shadowBlur = 14;
+    ctx.strokeStyle = 'rgba(46, 204, 113, 0.28)';
+    ctx.lineWidth = 3.6;
+    ctx.stroke();
+
+    // 2. Focused luminous core
+    ctx.shadowBlur = 4;
+    ctx.shadowColor = '#a8ff78';
+    ctx.strokeStyle = 'rgba(220, 255, 235, 0.9)';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+
+    // 3. Electron beam dot
+    const last = pts[pts.length - 1];
+    const lx = centerX + last.x * halfScope * 0.85;
+    const ly = centerY - last.y * halfScope * 0.85;
+    ctx.beginPath();
+    ctx.arc(lx, ly, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = '#2ecc71';
+    ctx.shadowBlur = 12;
+    ctx.fill();
     ctx.restore();
   }
 }

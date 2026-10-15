@@ -46,7 +46,20 @@ An interactive physical harmonic visualizer and audio synthesizer that turns mus
 * **Simplest First Matrix:** Dedicated 12-card gallery rendering every interval from C ordered by harmonic simplicity.
 * **Custom Integer Ratio Input:** Enter arbitrary ratios (e.g. `16:17:18` or `3:4:5`) with automatic GCD reduction.
 * **Mini Oscilloscope Waveform:** Real-time time-domain audio trace strip at the bottom of the screen.
-* **Snapshot Export:** One-click high-resolution PNG export.
+### 📁 MIDI & MP3 File Importer
+* **Import Anywhere:** Click **"🎵 Import MIDI / MP3"** in the top navigation or drag-and-drop `.mid`, `.midi`, `.mp3`, `.wav`, or `.ogg` anywhere onto the browser window.
+* **MIDI Playback & Live Ratio Tracking (`.mid`, `.midi`):**
+  * Built-in polyphonic synthesis engine with velocity sensitivity and stereo spatial spread.
+  * Real-time active chord and interval detection: dynamically computes the harmonic ratio (e.g. $3:2$, $5:4$, $4:5:6$) of sounding notes as the song progresses.
+  * Live interactive piano keyboard visualization lighting up keys in sync with the performance.
+  * Lissajous curves and 3D knots morph fluidly to match every chord change.
+* **Dual-Channel X-Y Stereo Vectorscope (`.mp3`, `.wav`, `.ogg`):**
+  * **Vectorscope X-Y Mode:** Authentic cathode-ray oscilloscope channel mapping (Left channel on $X$, Right channel on $Y$). Plays and visualizes real **Oscilloscope Music** and stereo soundstages with luminous CRT phosphor persistence.
+  * **Pitch Tracking Mode:** Real-time autocorrelation fundamental frequency extraction that maps music directly to notes and harmonic ratios.
+* **Integrated Floating Media Player Bar:** Play, pause, stop, timeline scrubber, time counter, loop toggle, and playback speed multiplier ($0.5\times$, $1\times$, $1.5\times$, $2\times$).
+* **Built-in Demos:** Includes one-click demo presets:
+  * *Bach Two-Part Invention Counterpoint (MIDI)*
+  * *Synthesized Dual-Tone Stereo Oscilloscope Music (X-Y Mode)*
 
 ---
 

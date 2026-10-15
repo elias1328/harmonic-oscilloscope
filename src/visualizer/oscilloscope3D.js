@@ -205,6 +205,13 @@ export class Oscilloscope3D {
     this.camera.position.z = this.distance * Math.cos(this.rotation.y) * Math.cos(this.rotation.x);
     this.camera.lookAt(0, 0, 0);
 
+    // If in audio X-Y vectorscope mode (MP3 / stereo audio)
+    if (state.audioMode === 'xy' && state.xyPoints && state.xyPoints.length > 0) {
+      this.renderXYVectorscope3D(state);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
     const ratioInts = state.ratioInts || [2, 3];
     const n1 = ratioInts[0] || 1;
     const n2 = ratioInts[1] || 1;
@@ -343,5 +350,40 @@ export class Oscilloscope3D {
     this.coronaMat.color.set(primaryColor);
 
     this.renderer.render(this.scene, this.camera);
+  }
+
+  // Dedicated 3D hardware X-Y stereo vectorscope renderer (sweeps time along Z-axis)
+  renderXYVectorscope3D(state) {
+    const pts = state.xyPoints;
+    if (!pts || pts.length === 0) return;
+
+    const count = Math.min(pts.length, this.maxPoints);
+    const posArray = this.curveGeometry.attributes.position.array;
+
+    for (let i = 0; i < count; i++) {
+      const pt = pts[i];
+      posArray[i * 3] = pt.x * 0.95;
+      posArray[i * 3 + 1] = pt.y * 0.95;
+      posArray[i * 3 + 2] = ((i / count) * 2.0 - 1.0) * 0.95;
+    }
+
+    this.curveGeometry.setDrawRange(0, count);
+    this.curveGeometry.attributes.position.needsUpdate = true;
+
+    // Position tracer orb at current head of sweep
+    const last = pts[pts.length - 1];
+    this.tracerGroup.position.set(last.x * 0.95, last.y * 0.95, 0.95);
+    this.tracerGroup.visible = true;
+
+    // Phosphor green glow
+    this.glowMat.color.setHex(0x2ecc71);
+    this.glowMat.opacity = 0.8;
+    this.coreMat.color.setHex(0xa8ff78);
+    this.coreMat.opacity = 0.98;
+    this.coronaMat.color.setHex(0x2ecc71);
+
+    if (this.axisOrbs[0]) this.axisOrbs[0].position.set(last.x * 0.95, -1.02, -1.02);
+    if (this.axisOrbs[1]) this.axisOrbs[1].position.set(-1.02, last.y * 0.95, -1.02);
+    if (this.axisOrbs[2]) this.axisOrbs[2].position.set(-1.02, -1.02, 0.95);
   }
 }
