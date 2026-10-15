@@ -319,3 +319,48 @@ describe('G3.12: idle matrix', () => {
     expect(count()).toBeGreaterThan(before);
   });
 });
+
+describe('Phase 4: Time Tunnel in the app', () => {
+  const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 0)); h.frames(3); };
+
+  it('G4.3: the nav toggle switches 2D to 3D with the tunnel on; media only suggests it', async () => {
+    expect(h.app.state.dimension).toBe('2D');
+    h.click('#btn-demo-midi'); h.frames(2);
+    const btn = h.$('#btn-tunnel');
+    expect(btn.classList.contains('suggested')).toBe(true);
+    expect(btn.getAttribute('data-suggested')).toBe('true');
+    expect(h.app.state.tunnel).toBe(false); // never auto-enabled
+    h.click('#btn-tunnel');
+    await settle();
+    expect(h.app.state.dimension).toBe('3D');
+    expect(h.app.state.tunnel).toBe(true);
+    expect(btn.classList.contains('active')).toBe(true);
+    expect(btn.classList.contains('suggested')).toBe(false);
+    expect(h.app.visualizer3D.mode).toBe('tunnel');
+  });
+
+  it('G4.10: the Depth/Speed and History sliders change uSpeed and the effective N', async () => {
+    h.click('#btn-tunnel');
+    await settle();
+    const t = h.app.visualizer3D.tunnel;
+    const s = h.$('#slider-tunnel-speed');
+    s.value = 1.5; s.dispatchEvent(new Event('input', { bubbles: true })); h.flush(); h.step();
+    expect(t.material.uniforms.uSpeed.value).toBe(1.5);
+    const n = h.$('#slider-tunnel-history');
+    const before = t.geometry.attributes.position.array;
+    n.value = 120; n.dispatchEvent(new Event('input', { bubbles: true })); h.flush(); h.step();
+    expect(t.ring.history).toBe(120);
+    expect(t.material.uniforms.uHistory.value).toBeCloseTo(4, 9);
+    expect(t.geometry.attributes.position.array).toBe(before);
+  });
+
+  it('G4.6: without media the tunnel follows the wall clock', async () => {
+    h.click('#btn-tunnel');
+    await settle();
+    const t = h.app.visualizer3D.tunnel;
+    const u0 = t.material.uniforms.uNow.value;
+    h.frames(30, 20); // 0.6 s
+    expect(t.material.uniforms.uNow.value - u0).toBeCloseTo(0.6, 2);
+    expect(t.stats().count).toBeGreaterThan(10);
+  });
+});

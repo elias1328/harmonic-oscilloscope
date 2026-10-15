@@ -13,6 +13,7 @@ export function bindMedia({ store, audio, importer }) {
     frame.xy = null;
     importer.audioMode = 'xy';
     store.set({
+      tunnelSuggested: !store.get().tunnel, // suggest the Time Tunnel, never switch it on by itself
       media: { type: info.type, info, audioMode: info.type === 'midi' ? 'midi' : 'xy', playing: false, time: 0, duration: info.duration },
       ...(info.type === 'audio' ? { chord: xyChord() } : {})
     });

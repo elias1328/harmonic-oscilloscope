@@ -19,9 +19,13 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { makeProjector, project } from '../render/lissajous.js';
 import { BloomGovernor } from './bloomGovernor.js';
+import { TimeTunnel } from './timeTunnel.js';
 
 const MAX_POINTS = 12000;
 const DEFAULT_VIEW = { rx: 0.35, ry: -0.6, zoom: 1 };
+// Time Tunnel: look into the tunnel at 25° to its axis: cos 25° = cos(rx)·cos(ry)
+const TUNNEL_RX = 0.25;
+export const TUNNEL_VIEW = { rx: TUNNEL_RX, ry: -Math.acos(Math.cos((25 * Math.PI) / 180) / Math.cos(TUNNEL_RX)), zoom: 1 };
 const FOV = 45;
 const CUBE_RADIUS = Math.sqrt(3) * 1.04; // circumscribed sphere of the cube and its edge orbs
 
@@ -65,9 +69,12 @@ export class Oscilloscope3D {
     this.ghostKey = null;
     this.ghostLog = [];
 
+    this.mode = 'figure';
     this.setupCube();
     this.setupCurveObjects();
     this.setupAxisOrbs();
+    this.tunnel = new TimeTunnel();
+    this.scene.add(this.tunnel.group);
     this.setupBloom();
     this.bindEvents();
 
@@ -97,13 +104,20 @@ export class Oscilloscope3D {
     // Ghost of the complete figure (faint, thin). glowMat = the voice-coloured material.
     this.glowMat = new LineMaterial({ color: 0xff9f43, linewidth: 1.3, transparent: true, opacity: 0.32, depthWrite: false });
     this.ghostLine = makeLine(this.glowMat, 4001);
-    this.curveGroup.add(this.ghostLine);
+    // soft glow for when bloom is off (slow devices): a wide faint copy of the same geometry
+    this.ghostHaloMat = new LineMaterial({ color: 0xff9f43, linewidth: 6, transparent: true, opacity: 0.1, depthWrite: false, blending: THREE.AdditiveBlending });
+    this.ghostHalo = new Line2(this.ghostLine.geometry, this.ghostHaloMat);
+    this.ghostHalo.frustumCulled = false;
+    this.curveGroup.add(this.ghostHalo, this.ghostLine);
 
     // Live trace: white multiplier × per-vertex colours that fade with age. coreMat is white in
     // the normal view and tinted phosphor-green by the X-Y vectorscope.
     this.coreMat = new LineMaterial({ color: 0xffffff, linewidth: 2.6, vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false, blending: THREE.AdditiveBlending });
     this.trailLine = makeLine(this.coreMat, MAX_POINTS);
-    this.curveGroup.add(this.trailLine);
+    this.trailHaloMat = new LineMaterial({ color: 0xffffff, linewidth: 9, vertexColors: true, transparent: true, opacity: 0.16, depthWrite: false, blending: THREE.AdditiveBlending });
+    this.trailHalo = new Line2(this.trailLine.geometry, this.trailHaloMat);
+    this.trailHalo.frustumCulled = false;
+    this.curveGroup.add(this.trailHalo, this.trailLine);
 
     // Tracer: white core + coloured corona
     this.tracerGroup = new THREE.Group();
@@ -147,11 +161,26 @@ export class Oscilloscope3D {
     return !!(this.composer && this.bloomWanted && !this.governor.autoDisabled);
   }
 
-  // Exact defaults: orientation, zoom.
+  // Exact defaults of the current mode: orientation, zoom.
   resetView() {
-    this.view = { ...DEFAULT_VIEW };
-    this.target = { ...DEFAULT_VIEW };
-    this.autoRotate = true;
+    const v = this.mode === 'tunnel' ? TUNNEL_VIEW : DEFAULT_VIEW;
+    this.view = { ...v };
+    this.target = { ...v };
+    this.autoRotate = this.mode !== 'tunnel';
+  }
+
+  /** 'figure' (the cube) or 'tunnel' (the Waterfall Time Tunnel). */
+  setMode(mode) {
+    if (mode === this.mode) return;
+    this.mode = mode;
+    const tunnel = mode === 'tunnel';
+    this.tunnel.group.visible = tunnel;
+    this.cubeGroup.visible = !tunnel;
+    this.curveGroup.visible = !tunnel;
+    this.axisOrbs.forEach(o => { o.visible = !tunnel; });
+    if (tunnel) this.tunnel.clear();
+    this.resetView();
+    this.updateCamera(true);
   }
 
   bindEvents() {
@@ -201,7 +230,8 @@ export class Oscilloscope3D {
     this.renderer.setSize(w, h);
     if (this.composer) this.composer.setSize(w, h);
     const pr = this.renderer.getPixelRatio ? this.renderer.getPixelRatio() : 1;
-    for (const m of [this.glowMat, this.coreMat]) m.resolution.set(w * pr, h * pr);
+    for (const m of [this.glowMat, this.coreMat, this.ghostHaloMat, this.trailHaloMat]) m.resolution.set(w * pr, h * pr);
+    this.tunnel.setResolution(w * pr, h * pr);
     this.updateCamera(true);
   }
 
@@ -221,7 +251,11 @@ export class Oscilloscope3D {
     const half = Math.min(a.right - a.left, a.bottom - a.top) / 2 * 0.92;
     // sphere of radius r at distance d spans tan(asin(r/d)) / tan(fov/2) × H/2 pixels
     const k = (half / (H / 2)) * Math.tan((FOV * Math.PI) / 360);
-    this.fitDistance = CUBE_RADIUS / Math.sin(Math.atan(k));
+    // the tunnel: aim a little behind the front figure so the receding slices fill the view
+    const tunnel = this.mode === 'tunnel';
+    const lookZ = tunnel ? -Math.min(this.tunnel.depth, 10) * 0.22 : 0;
+    const radius = tunnel ? 1.3 + Math.min(this.tunnel.depth, 10) * 0.16 : CUBE_RADIUS;
+    this.fitDistance = radius / Math.sin(Math.atan(k));
 
     if (this.autoRotate && this.pointers.size === 0) this.target.ry += 0.0025;
     const ease = snap ? 1 : 0.1;
@@ -229,8 +263,8 @@ export class Oscilloscope3D {
     const d = this.fitDistance / this.view.zoom;
     const { rx, ry } = this.view;
     this.camera.aspect = W / H;
-    this.camera.position.set(d * Math.sin(ry) * Math.cos(rx), d * Math.sin(rx), d * Math.cos(ry) * Math.cos(rx));
-    this.camera.lookAt(0, 0, 0);
+    this.camera.position.set(d * Math.sin(ry) * Math.cos(rx), d * Math.sin(rx), lookZ + d * Math.cos(ry) * Math.cos(rx));
+    this.camera.lookAt(0, 0, lookZ);
     // shift the principal point to the centre of the free area
     this.camera.setViewOffset(W, H, W / 2 - cx, H / 2 - cy, W, H);
     this.camera.updateProjectionMatrix();
@@ -291,6 +325,7 @@ export class Oscilloscope3D {
     col.needsUpdate = true;
     geo.instanceCount = Math.max(0, n - 1);
     this.glowMat.color.set(color);
+    this.ghostHaloMat.color.set(color);
     this.ghostLog.push({ key, at: performance.now() });
     if (this.ghostLog.length > 400) this.ghostLog.splice(0, 200);
   }
@@ -317,20 +352,33 @@ export class Oscilloscope3D {
     return pts;
   }
 
-  /** frame: { figure, t (clock s), drawMode, colors, xyPoints?, bloom } */
+  /** frame: { figure, t (clock s), drawMode, colors, xyPoints?, bloom, tunnel? } */
   render(frame) {
+    // the governor judges the real frame interval (GPU work included), not just this JS
     const start = performance.now();
+    const interval = this.lastFrameStart ? start - this.lastFrameStart : 0;
+    this.lastFrameStart = start;
+    this.setMode(frame.tunnel && frame.tunnel.on ? 'tunnel' : 'figure');
     this.updateCamera();
-    if (frame.xyPoints) {
+    if (this.mode === 'tunnel') {
+      if (frame.tunnel.speed !== undefined && frame.tunnel.speed !== this.tunnel.speed) this.tunnel.setSpeed(frame.tunnel.speed);
+      if (frame.tunnel.history !== undefined && frame.tunnel.history !== this.tunnel.ring.history) this.tunnel.setHistory(frame.tunnel.history);
+      this.tunnel.update(frame.tunnel);
+    } else if (frame.xyPoints) {
       this.renderXYVectorscope3D(frame.xyPoints);
     } else {
       this.renderFigure(frame);
     }
     this.draw();
-    if (this.bloomActive) this.governor.record(performance.now() - start);
+    if (this.bloomActive && interval > 0 && interval < 250) this.governor.record(interval);
   }
 
   draw() {
+    // the line halos stand in for bloom when it is off
+    const halo = !this.bloomActive;
+    this.ghostHalo.visible = halo && this.ghostLine.visible;
+    this.trailHalo.visible = halo && this.trailLine.visible;
+    this.tunnel.frontHalo.visible = halo && this.tunnel.front.visible;
     if (this.bloomActive) {
       try {
         this.composer.render();

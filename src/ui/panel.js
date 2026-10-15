@@ -21,6 +21,12 @@ export function initPanel(store, actions) {
   const tuning = $('btn-tuning');
 
   speed.addEventListener('input', () => store.set({ speedVal: parseFloat(speed.value) }));
+  const tSpeed = $('slider-tunnel-speed');
+  const tHist = $('slider-tunnel-history');
+  tSpeed.addEventListener('input', () => store.set({ tunnelSpeed: parseFloat(tSpeed.value) }));
+  tHist.addEventListener('input', () => store.set({ tunnelHistory: parseInt(tHist.value, 10) }));
+  store.subscribe(s => s.tunnelSpeed, (v) => { $('val-tunnel-speed').textContent = `${v.toFixed(2)} /s`; });
+  store.subscribe(s => s.tunnelHistory, (n) => { $('val-tunnel-history').textContent = `${(n / 30).toFixed(1)} s`; });
   const persistence = $('slider-persistence');
   const glow = $('btn-glow');
   persistence.addEventListener('input', () => store.set({ persistence: parseFloat(persistence.value) }));

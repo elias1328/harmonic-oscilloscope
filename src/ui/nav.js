@@ -18,7 +18,18 @@ export function initNav(store, actions, { grid, snapshot }) {
 
   lab.addEventListener('click', () => actions.setTab('lab'));
   matrix.addEventListener('click', () => actions.setTab('matrix'));
-  dim.addEventListener('click', () => store.set({ dimension: store.get().dimension === '2D' ? '3D' : '2D' }));
+  dim.addEventListener('click', () => {
+    const to2D = store.get().dimension === '3D';
+    store.set(to2D ? { dimension: '2D', tunnel: false } : { dimension: '3D' });
+  });
+  const tunnel = $('btn-tunnel');
+  tunnel.addEventListener('click', () => actions.toggleTunnel());
+  store.subscribe(s => [s.tunnel && s.dimension === '3D', s.tunnelSuggested], ([on, suggested]) => {
+    tunnel.classList.toggle('active', on);
+    tunnel.classList.toggle('suggested', !!suggested && !on);
+    if (suggested && !on) tunnel.setAttribute('data-suggested', 'true'); else tunnel.removeAttribute('data-suggested');
+    tunnel.title = suggested && !on ? 'Time Tunnel — try it with this track!' : 'Time Tunnel: past figures recede into depth';
+  });
   draw.addEventListener('click', () => {
     const live = store.get().drawMode !== 'live';
     store.set({ drawMode: live ? 'live' : 'full' });

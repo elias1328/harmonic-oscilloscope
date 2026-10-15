@@ -13,6 +13,7 @@ import { IntervalsGrid } from './visualizer/intervalsGrid.js';
 import { MiniWaveform } from './visualizer/miniWaveform.js';
 import { Figure, rootHz } from './app/figure.js';
 import { persistenceTau } from './visualizer/phosphor2D.js';
+import { TunnelClock, buildSlice, DEFAULT_SPEED, DEFAULT_SLICES } from './visualizer/tunnelCore.js';
 import { createActions } from './app/actions.js';
 import { bindAudio } from './app/audioSync.js';
 import { bindMedia } from './app/mediaBridge.js';
@@ -49,13 +50,19 @@ const store = createStore({
   traceReset: 0,
   playerReset: 0,
   persistence: 50, // slider 0–100 (100 = ∞); used by the X-Y scope and 12-TET Full Loop
-  bloom: true
+  bloom: true,
+  tunnel: false, // Waterfall Time Tunnel (3D)
+  tunnelSuggested: false,
+  tunnelSpeed: DEFAULT_SPEED,
+  tunnelHistory: DEFAULT_SLICES
 });
 
 const audio = new AudioEngine();
 const importer = new MediaImporter(audio);
 const clock = new Clock(() => performance.now() / 1000);
 const figure = new Figure();
+const tunnelClock = new TunnelClock();
+let tunnelWasOn = false;
 const visualizer2D = new Oscilloscope2D($('canvas-2d'));
 // three.js is loaded on the first switch to 3D (keeps the initial bundle small)
 let visualizer3D = null;
@@ -155,6 +162,18 @@ function animate() {
       xy: xyMode && bridge.frame.xy ? bridge.frame.xy : null
     };
     bridge.frame.xy = null; // each X-Y segment is drawn once
+    // Time Tunnel: driven by the media clock (pause freezes, seek/eject clears), wall clock without media
+    const tunnelOn = state.tunnel && state.dimension === '3D';
+    if (tunnelOn) {
+      const tc = tunnelClock.update(state.media ? importer.currentTime : null, t);
+      const xyWindow = bridge.frame.xyPoints;
+      frame.tunnel = {
+        on: true, now: tc.now, cleared: tc.cleared || !tunnelWasOn, title: state.chord.meta.title,
+        speed: state.tunnelSpeed, history: state.tunnelHistory,
+        makeSlice: () => buildSlice({ state, figure, t, xyPoints: xyWindow })
+      };
+    }
+    tunnelWasOn = tunnelOn;
     if (state.dimension === '2D') {
       visualizer2D.setSafeArea(computeSafeArea());
       visualizer2D.render(frame);

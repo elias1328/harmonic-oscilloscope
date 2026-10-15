@@ -2,7 +2,7 @@
 // the last `window` frames stays above `limitMs` (25 ms ≈ 40 fps), bloom is disabled.
 
 export class BloomGovernor {
-  constructor({ limitMs = 25, window = 90 } = {}) {
+  constructor({ limitMs = 25, window = 45 } = {}) {
     this.limitMs = limitMs;
     this.window = window;
     this.reset();

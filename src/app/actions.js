@@ -12,13 +12,14 @@ export function createActions({ store, audio, importer, get3D }) {
       importer.pause();
       if (get3D()) get3D().resetMaterials();
       audio.setDroneEnabled(true, { rebuild: false });
-      store.set({ media: null });
+      store.set({ media: null, tunnelSuggested: false });
     },
 
     setChord(chord, extra = {}) {
       actions.exitMedia();
       const patch = { chord, customError: '', ...extra };
-      if (chord.view) patch.dimension = chord.view;
+      // a chord's preferred view applies, except while the Time Tunnel (3D) is on
+      if (chord.view && !get().tunnel) patch.dimension = chord.view;
       store.set(patch);
     },
 
@@ -65,6 +66,12 @@ export function createActions({ store, audio, importer, get3D }) {
 
     setPanelCollapsed(collapsed) {
       store.set({ panelCollapsed: collapsed, panelAutoCollapsed: false });
+    },
+
+    toggleTunnel() {
+      const on = !get().tunnel;
+      // switching the tunnel on from 2D goes to 3D
+      store.set(on ? { tunnel: true, tunnelSuggested: false, dimension: '3D' } : { tunnel: false });
     },
 
     clearRedraw() {

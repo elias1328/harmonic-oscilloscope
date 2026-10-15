@@ -28,6 +28,7 @@
       <button class="nav-btn active" id="btn-tab-lab" title="Oscilloscope Lab"><span class="nav-ico">🔬</span><span class="nav-label">Oscilloscope Lab</span></button>
       <button class="nav-btn" id="btn-tab-matrix" title="Simplest First Matrix"><span class="nav-ico">🔳</span><span class="nav-label">Simplest First Matrix</span></button>
       <button class="nav-btn" id="btn-toggle-dimension" title="3D Mode"><span class="nav-ico">🧊</span><span class="nav-label">3D Mode</span></button>
+      <button class="nav-btn" id="btn-tunnel" title="Time Tunnel: past figures recede into depth"><span class="nav-ico">⏳</span><span class="nav-label">Time Tunnel</span></button>
       <button class="nav-btn" id="btn-snapshot" title="Export high-resolution PNG snapshot"><span class="nav-ico">📸</span><span class="nav-label">Snapshot</span></button>
     </nav>
 
@@ -156,6 +157,23 @@
         </div>
         <div style="font-size: 11px; color: #8892b0; margin-top: 5px;" id="persistence-help">
           💡 How long the trace keeps glowing in the X-Y scope and the 12-TET Full Loop. Live Trace keeps everything (∞); the faint ghost always shows the complete figure.
+        </div>
+      </div>
+
+      <!-- Waterfall Time Tunnel -->
+      <div class="control-group">
+        <div class="control-label">
+          <span>Time Tunnel · Depth / Speed</span>
+          <span class="control-val" id="val-tunnel-speed">2.00 /s</span>
+        </div>
+        <input type="range" id="slider-tunnel-speed" min="0.25" max="4" step="0.05" value="2" />
+        <div class="control-label" style="margin-top: 10px;">
+          <span>History length</span>
+          <span class="control-val" id="val-tunnel-history">8.0 s</span>
+        </div>
+        <input type="range" id="slider-tunnel-history" min="60" max="480" step="30" value="240" />
+        <div style="font-size: 11px; color: #8892b0; margin-top: 5px;">
+          💡 ⏳ Time Tunnel: the current figure sits at the front and every past moment slides back into depth and fades. With media it follows the track's clock (pause freezes it, seeking clears it).
         </div>
       </div>
 

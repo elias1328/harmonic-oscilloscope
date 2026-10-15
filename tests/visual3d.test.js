@@ -57,7 +57,7 @@ describe('G3.7 / G3.11: 3D lines, bloom governor, camera controls', async () => 
     expect(fast.autoDisabled).toBe(false);
     const slow = new BloomGovernor();
     let on = true;
-    for (let i = 0; i < 89; i++) on = slow.record(40);
+    for (let i = 0; i < slow.window - 1; i++) on = slow.record(40);
     expect(on).toBe(true); // not judged before a full window
     expect(slow.record(40)).toBe(false);
     expect(slow.autoDisabled).toBe(true);
@@ -69,7 +69,7 @@ describe('G3.7 / G3.11: 3D lines, bloom governor, camera controls', async () => 
   it('G3.7: the renderer applies it (slow frames disable bloom; the Glow toggle re-arms it)', () => {
     const v = new Oscilloscope3D(document.createElement('div'));
     v.setBloom(true);
-    for (let i = 0; i < 90; i++) v.governor.record(30);
+    for (let i = 0; i < v.governor.window; i++) v.governor.record(30);
     expect(v.bloomActive).toBe(false);
     v.setBloom(true);
     expect(v.governor.autoDisabled).toBe(false);

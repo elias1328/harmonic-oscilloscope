@@ -37,7 +37,11 @@ const GATES = {
   'G3.8': 'R30: no three.js chunk before the first 3D toggle, one after',
   'G3.9': 'waveform strip clear of the 2D figure; 3D cube projected inside the free area (1280x720, 1600x1000)',
   'G3.10': '8-voice header: no badge line starts or ends with "+"',
-  'G3.11': '3D canvas has touch-action: none'
+  'G3.11': '3D canvas has touch-action: none',
+  'G4.3': 'Time Tunnel toggle: 2D -> 3D with the tunnel; media loading only suggests it',
+  'G4.6': 'the tunnel follows the media clock: pause freezes uNow, seek and eject clear, wall clock without media',
+  'G4.8': 'MIDI demo: one marker per header-title change, labelled with that title',
+  'G4.9': 'MIDI demo: slices span ≥ 50% of the depth after 5 s; median fps at 20 s ≥ 0.85 × at 2 s (tunnel on)'
 };
 const gates = Object.fromEntries(Object.entries(GATES).map(([id, desc]) => [id, { desc, pass: null, details: [] }]));
 const gateResult = (id, ok, detail) => {
@@ -111,6 +115,13 @@ await page.addInitScript(() => {
   window.__liveTones = () => window.__osc.filter(r => isLive(r) && !isClick(r)).map(r => ({ f: +r.o.frequency.value.toFixed(2), gain: pathGain(r.o) }));
   window.__fps = (ms) => new Promise(res => { let n = 0; const t0 = performance.now(); const f = () => { n++; performance.now() - t0 < ms ? requestAnimationFrame(f) : res(n * 1000 / (performance.now() - t0)); }; requestAnimationFrame(f); });
   window.__nextFrame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  // G4.2: robust fps = median of 3 consecutive 1 s windows
+  window.__fpsMedian = async () => {
+    const w = [];
+    for (let i = 0; i < 3; i++) w.push(await window.__fps(1000));
+    w.sort((a, b) => a - b);
+    return w[1];
+  };
   // Lit pixels of the 2D figure box: count, mean luminance of lit pixels, mean of the brightest 10%.
   window.__lit = (thr = 30) => {
     const c = document.getElementById('canvas-2d');
@@ -455,21 +466,111 @@ await section('fps over time', ['G3.4'], async () => {
   if (await visible('#viewport-3d')) await page.click('#btn-toggle-dimension');
   const t0 = Date.now();
   await page.fill('#input-custom-ratio', '45:32'); await page.press('#input-custom-ratio', 'Enter');
-  await wait(1500 - (Date.now() - t0));
-  const f2 = await page.evaluate(() => window.__fps(1000));
-  await wait(19500 - (Date.now() - t0));
-  const f20 = await page.evaluate(() => window.__fps(1000));
+  await wait(500 - (Date.now() - t0));
+  const f2 = await page.evaluate(() => window.__fpsMedian()); // windows around 2 s
+  await wait(18500 - (Date.now() - t0));
+  const f20 = await page.evaluate(() => window.__fpsMedian()); // windows around 20 s
   await shot('19-tritone-live-20s');
-  gateResult('G3.4', f20 >= 0.85 * f2, `2D live 45:32: ${f2.toFixed(1)} fps at 2 s, ${f20.toFixed(1)} fps at 20 s`);
+  gateResult('G3.4', f20 >= 0.85 * f2, `2D live 45:32: median ${f2.toFixed(1)} fps at 2 s, ${f20.toFixed(1)} fps at 20 s (3 × 1 s windows each)`);
   await page.click('#btn-demo-audio');
   const t1 = Date.now();
-  await wait(1500);
-  const x2 = await page.evaluate(() => window.__fps(1000));
-  await wait(19500 - (Date.now() - t1));
-  const x20 = await page.evaluate(() => window.__fps(1000));
+  await wait(500);
+  const x2 = await page.evaluate(() => window.__fpsMedian());
+  await wait(18500 - (Date.now() - t1));
+  const x20 = await page.evaluate(() => window.__fpsMedian());
   await shot('19-xy-demo-20s');
-  gateResult('G3.4', x20 >= 0.85 * x2, `X-Y demo: ${x2.toFixed(1)} fps at 2 s, ${x20.toFixed(1)} fps at 20 s`);
+  gateResult('G3.4', x20 >= 0.85 * x2, `X-Y demo: median ${x2.toFixed(1)} fps at 2 s, ${x20.toFixed(1)} fps at 20 s (3 × 1 s windows each)`);
   await page.click('#btn-player-eject'); await wait(300);
+});
+
+// ---------------- Phase 4: Waterfall Time Tunnel ----------------
+await section('time tunnel', ['G4.3', 'G4.6', 'G4.8', 'G4.9'], async () => {
+  const st = () => page.evaluate(() => window.__harmonic.visualizer3D.tunnel.stats());
+  await clickPreset(0); await wait(300);
+  if (await visible('#viewport-3d')) { await page.click('#btn-toggle-dimension'); await wait(300); }
+  // G4.3: media suggests the tunnel but never switches it on
+  await page.click('#btn-demo-midi'); await wait(400);
+  const sug = await page.evaluate(() => {
+    const b = document.getElementById('btn-tunnel');
+    return { cls: b.classList.contains('suggested'), attr: b.getAttribute('data-suggested'), on: window.__harmonic.state.tunnel, dim: window.__harmonic.state.dimension };
+  });
+  gateResult('G4.3', sug.cls && sug.attr === 'true' && !sug.on && sug.dim === '2D', `after loading the MIDI demo in 2D: suggested class=${sug.cls} data-suggested=${sug.attr}, tunnel on=${sug.on}, view ${sug.dim}`);
+  // count header-title changes from the moment the tunnel is on (G4.8)
+  await page.click('#btn-player-stop'); await page.click('#btn-player-play'); // from the start
+  const t0 = Date.now();
+  await page.click('#btn-tunnel');
+  await page.waitForFunction(() => window.__harmonic.visualizer3D && window.__harmonic.visualizer3D.mode === 'tunnel', null, { timeout: 8000 });
+  await page.evaluate(() => {
+    const el = document.getElementById('header-title');
+    window.__titles = [];
+    window.__lastTitle = el.textContent;
+    window.__titleObs = new MutationObserver(() => {
+      const t = el.textContent;
+      if (t !== window.__lastTitle) { window.__titles.push(t); window.__lastTitle = t; }
+    });
+    window.__titleObs.observe(el, { childList: true, characterData: true, subtree: true });
+    window.__markers0 = window.__harmonic.visualizer3D.tunnel.markersCreated;
+  });
+  const on = await page.evaluate(() => ({ on: window.__harmonic.state.tunnel, dim: window.__harmonic.state.dimension, active: document.getElementById('btn-tunnel').classList.contains('active'), suggested: document.getElementById('btn-tunnel').classList.contains('suggested') }));
+  gateResult('G4.3', on.on && on.dim === '3D' && on.active && !on.suggested, `clicking ⏳ in 2D: tunnel on=${on.on}, view ${on.dim}, button active=${on.active}, suggestion cleared=${!on.suggested}`);
+
+  // G4.9 fps (around 2 s and 20 s of tunnel playback) and depth span after 5 s of media time
+  await wait(Math.max(0, 500 - (Date.now() - t0)));
+  const fA = await page.evaluate(() => window.__fpsMedian());
+  await page.waitForFunction(() => window.__harmonic.mediaImporter.currentTime >= 5, null, { timeout: 60000 });
+  const s5 = await st();
+  gateResult('G4.9', s5.span >= 0.5 * s5.depth, `after 5 s of MIDI playback: ${s5.count} slices spanning ${s5.span.toFixed(2)} of ${s5.depth.toFixed(2)} depth units (${(100 * s5.span / s5.depth).toFixed(0)}%)`);
+  await page.waitForFunction(() => window.__harmonic.mediaImporter.currentTime >= 9.5, null, { timeout: 60000 });
+  await shot('20-tunnel-midi-10s');
+  await wait(Math.max(0, 18500 - (Date.now() - t0)));
+  const fB = await page.evaluate(() => window.__fpsMedian());
+  gateResult('G4.9', fB >= 0.85 * fA, `tunnel on, MIDI demo: median ${fA.toFixed(1)} fps at 2 s, ${fB.toFixed(1)} fps at 20 s (3 × 1 s windows each)`);
+
+  // G4.8 markers vs title changes
+  const mk = await page.evaluate(() => {
+    window.__titleObs.disconnect();
+    const t = window.__harmonic.visualizer3D.tunnel;
+    return { created: t.markersCreated - window.__markers0, labels: t.markerLabels.slice(window.__markers0), titles: window.__titles };
+  });
+  gateResult('G4.8', mk.titles.length >= 3 && mk.created === mk.titles.length && mk.labels.join('|') === mk.titles.join('|'), `${mk.titles.length} title changes, ${mk.created} markers; titles [${mk.titles.join(', ')}] labels [${mk.labels.join(', ')}]`);
+
+  // G4.6: pause freezes, seek clears, eject clears, wall clock without media
+  await page.click('#btn-player-play'); await wait(200);
+  const u1 = (await st()).uNow; await wait(1000); const u2 = (await st()).uNow;
+  gateResult('G4.6', u1 === u2, `paused: uNow ${u1.toFixed(4)} -> ${u2.toFixed(4)} over 1 s`);
+  await page.click('#btn-player-play'); await wait(800);
+  // the tunnel keeps a per-frame trace of its visible slice count
+  const trace = () => page.evaluate(() => window.__harmonic.visualizer3D.tunnel.countTrace.slice());
+  const before = (await st()).count;
+  await setRange('#player-scrubber', '20');
+  await wait(1500);
+  const tr = await trace();
+  const zeroAt = tr.lastIndexOf(0);
+  const afterSeek = zeroAt >= 0 ? 0 : Math.min(...tr);
+  const grown = tr[tr.length - 1];
+  gateResult('G4.6', before > 10 && afterSeek === 0 && grown > 5, `seek: ${before} slices -> ${afterSeek} -> ${grown} 1.5 s later (per-frame trace ${tr.slice(Math.max(0, zeroAt - 2), zeroAt + 4).join(',')}…)`);
+  const beforeEject = (await st()).count;
+  await page.click('#btn-player-eject'); await wait(800);
+  const tr2 = await trace();
+  const afterEject = tr2.includes(0) ? 0 : Math.min(...tr2);
+  const w1 = await page.evaluate(() => ({ u: window.__harmonic.visualizer3D.tunnel.stats().uNow, t: performance.now() }));
+  await wait(1000);
+  const w2 = await page.evaluate(() => ({ u: window.__harmonic.visualizer3D.tunnel.stats().uNow, t: performance.now() }));
+  const du = w2.u - w1.u;
+  const dt = (w2.t - w1.t) / 1000;
+  gateResult('G4.6', beforeEject > 10 && afterEject === 0, `eject: ${beforeEject} slices -> ${afterEject} (then ${tr2[tr2.length - 1]} from the wall clock)`);
+  gateResult('G4.6', Math.abs(du - dt) < 0.25 && (await page.evaluate(() => window.__harmonic.state.media)) === null, `no media: uNow advanced ${du.toFixed(2)} s over ${dt.toFixed(2)} s of wall time`);
+
+  // G4.12 screenshots: X-Y demo and manual 12-TET in the tunnel
+  await page.click('#btn-demo-audio'); await wait(6000);
+  await shot('20-tunnel-xy-demo');
+  await page.click('#btn-player-eject'); await wait(400);
+  await clickPreset(2); await page.click('#btn-tuning'); await wait(9000);
+  await shot('20-tunnel-12tet-major');
+  await page.click('#btn-tuning');
+  await page.click('#btn-tunnel'); await wait(300);
+  await page.click('#btn-toggle-dimension').catch(() => {}); await wait(300);
+  if (await visible('#viewport-3d')) { await page.click('#btn-toggle-dimension'); await wait(300); }
 });
 
 // ---------------- MIDI demo: G1.1, G1.6, G1.7 ----------------
