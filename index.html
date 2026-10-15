@@ -59,6 +59,18 @@
         </div>
       </div>
 
+      <!-- Slow motion: real time up to 30 Hz, above that one closed period lasts T_close -->
+      <div class="control-group">
+        <div class="control-label">
+          <span>Slow-mo <span class="control-sub" id="val-tclose">4.0 s / period</span></span>
+          <span class="control-val" id="val-slowmo">real time</span>
+        </div>
+        <input type="range" id="slider-slowmo" min="1" max="20" step="0.5" value="4" />
+        <div style="font-size: 11px; color: #8892b0; margin-top: 5px;">
+          💡 Up to 30 Hz the figure moves in real time with the sound. Above, it is the true motion slowed down so one full cycle of the chord takes this long.
+        </div>
+      </div>
+
       <!-- Harmonic Physics & Context Card -->
       <div class="control-group" id="harmonic-info-card">
         <div class="control-label">
@@ -86,9 +98,10 @@
           <span>Custom Integer Ratio</span>
         </div>
         <div class="ratio-input-wrapper">
-          <input type="text" id="input-custom-ratio" placeholder="e.g. 4:5:6 or 16:17:18" />
+          <input type="text" id="input-custom-ratio" placeholder="e.g. 4:5:6 or 16:17:18 (up to 8 voices)" />
           <button id="btn-apply-ratio">Apply</button>
         </div>
+        <div class="ratio-error" id="custom-ratio-error" role="alert" hidden></div>
       </div>
 
       <!-- Media & Song Importer Section -->
@@ -127,7 +140,7 @@
         </div>
         <input type="range" id="slider-phase" min="0" max="6.283" step="0.05" value="0" />
         <div style="font-size: 11px; color: #8892b0; margin-top: 5px; line-height: 1.4;">
-          💡 <strong>Phase Offset (φ):</strong> Shifts relative cycle timing. Visually rotates the figure like a 3D wireframe (0 = closed loop, π/2 = open curve). Acoustically, human ears are phase-deaf to isolated pitch (Ohm's Law), but phase shifts rhythmic click syncopation (&lt; 20 Hz) and creates audible stereo spatial widening!
+          💡 <strong>Phase Offset (φ):</strong> Swings the voices' relative phase around the clearest view of the figure (φ = 0). The swing stays clear of the phases where the curve would collapse into a retraced arc. Acoustically, human ears are phase-deaf to isolated pitch (Ohm's Law), but phase shifts rhythmic click syncopation (&lt; 20 Hz) and creates audible stereo spatial widening!
         </div>
       </div>
 

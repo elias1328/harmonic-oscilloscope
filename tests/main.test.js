@@ -14,6 +14,8 @@ afterEach(() => vi.restoreAllMocks());
 const text = (sel) => h.$(sel).textContent.trim();
 const activeKeys = () => [...document.querySelectorAll('.piano-key-white.active, .piano-key-black.active')].map(k => k.dataset.note).sort();
 const applyRatio = (v) => { h.$('#input-custom-ratio').value = v; h.click('#btn-apply-ratio'); };
+// Phase 2: store notifications are batched per frame; tests that click elements directly call
+// h.flush() before reading the DOM (h.click() does it itself).
 
 describe('R1: drone lifecycle in the app', () => {
   it('R1: loading the MIDI demo silences the drone for the whole playback; eject brings it back', () => {
@@ -32,8 +34,8 @@ describe('R1: drone lifecycle in the app', () => {
 
   it('R1: a manual action (preset) during media re-enables the drone', () => {
     h.click('#btn-demo-midi'); h.frames(5);
-    document.querySelectorAll('.preset-chip')[2].click();
-    expect(h.app.state.isMediaActive).toBe(false);
+    document.querySelectorAll('.preset-chip')[2].click(); h.flush();
+    expect(h.app.state.media).toBe(null);
     expect(h.app.audio.voices.length).toBe(3);
   });
 });
@@ -87,20 +89,24 @@ describe('R11 / H / D: player wiring', () => {
     h.click('#btn-demo-midi'); h.frames(30);
     expect(h.app.mediaImporter.activeMidiVoices.size).toBeGreaterThan(0);
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
-    document.dispatchEvent(new Event('visibilitychange'));
+    document.dispatchEvent(new Event('visibilitychange')); h.flush();
     expect(h.app.mediaImporter.isPlaying).toBe(false);
     expect(h.app.mediaImporter.activeMidiVoices.size).toBe(0);
     expect(text('#btn-player-play')).toBe('▶');
     delete document.hidden;
   });
 
+  // Phase 2: the visual time base is the one clock (state.time / visualSpeed are gone).
   it('D: a long gap between frames advances the visual clock by at most 0.1 s worth', () => {
-    const before = h.app.state.time;
+    const before = h.app.clock.now();
+    const theta = h.app.figure.model.theta(0, before);
     h.step(5000);
-    const advanced = h.app.state.time - before;
+    const advanced = h.app.clock.now() - before;
     expect(advanced).toBeGreaterThan(0);
-    // visual speed at 261.6 Hz = 1 + log10(261.6/30) ≈ 1.94 cycles/s
-    expect(advanced).toBeLessThanOrEqual(0.1 * (1 + Math.log10(261.6256 / 30)) + 1e-9);
+    expect(advanced).toBeLessThanOrEqual(0.1 + 1e-9);
+    // the figure moved by at most 0.1 s worth of its own motion
+    const w = h.app.figure.model.omega(0);
+    expect(h.app.figure.model.theta(0, h.app.clock.now()) - theta).toBeLessThanOrEqual(w * 0.1 + 1e-6);
   });
 });
 
@@ -143,8 +149,8 @@ describe('E: media callbacks only touch the DOM on change', () => {
 describe('R13 / R21 / R22: notes, names and piano selection', () => {
   it("R13: the matrix Octave card loads C + C' and selects both piano keys", () => {
     h.click('#btn-tab-matrix');
-    document.querySelector('.interval-card').click();
-    expect(h.app.state.notes).toEqual(['C', "C'"]);
+    document.querySelector('.interval-card').click(); h.flush();
+    expect(h.app.state.chord.labels()).toEqual(['C', "C'"]);
     expect(activeKeys()).toEqual(['C', "C'"]);
     expect(text('#header-notes-badge')).toMatch(/C'/);
   });
@@ -152,17 +158,17 @@ describe('R13 / R21 / R22: notes, names and piano selection', () => {
   it('R22: after a custom ratio, a piano key starts a fresh selection', () => {
     applyRatio('4:5:6');
     expect(activeKeys()).toEqual([]);
-    h.$('[data-note="A"]').click();
-    expect(h.app.state.notes).toEqual(['A']);
+    h.$('[data-note="A"]').click(); h.flush();
+    expect(h.app.state.chord.labels()).toEqual(['A']);
     expect(text('#header-category')).toBe('ROOT NOTE');
   });
 
   it('R22: during MIDI playback the piano shows (and later builds on) the sounding notes', () => {
-    document.querySelectorAll('.preset-chip')[3].click(); // minor triad C Eb G: must not leak into the MIDI selection
+    document.querySelectorAll('.preset-chip')[3].click(); h.flush(); // minor triad C Eb G: must not leak into the MIDI selection
     h.click('#btn-demo-midi'); h.frames(30); // C4 + G4
     expect(activeKeys()).toEqual(['C', 'G']);
-    h.$('[data-note="E"]').click();
-    expect(h.app.state.notes).toEqual(['C', 'E', 'G']);
+    h.$('[data-note="E"]').click(); h.flush();
+    expect(h.app.state.chord.labels()).toEqual(['C', 'E', 'G']);
     expect(text('#header-title')).toBe('4 : 5 : 6');
   });
 
@@ -193,7 +199,7 @@ describe('R25 / R26 / R27: imports', () => {
     expect(window.alert).toHaveBeenCalled();
     expect(text('#player-track-title')).toBe('No Track Loaded');
     expect(h.$('#media-player-bar').classList.contains('hidden')).toBe(true);
-    expect(h.app.state.isMediaActive).toBe(false);
+    expect(h.app.state.media).toBe(null);
     expect(h.app.audio.voices.length).toBeGreaterThan(0);
   });
 
@@ -239,5 +245,61 @@ describe('R3 / R28: matrix tab', () => {
     const before = count();
     h.frames(30);
     expect(count()).toBe(before);
+  });
+});
+
+describe('Phase 2 in the app', () => {
+  const badgeHz = () => [...text('#header-notes-badge').matchAll(/\(([\d.]+) Hz\)/g)].map(m => parseFloat(m[1]));
+  const setSlider = (sel, v) => { const el = h.$(sel); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); h.flush(); };
+
+  it('R4: piano E+G♯ header shows the real pitches in both tunings; tuning never transposes', () => {
+    h.click('#btn-clear-piano');
+    h.$('[data-note="E"]').click(); h.$('[data-note="Ab"]').click(); h.flush();
+    expect(badgeHz()).toEqual([329.6, 412.0]);
+    const before = h.app.audio.voices[0].oscs[0].frequency.value;
+    h.click('#btn-tuning');
+    expect(badgeHz()).toEqual([329.6, 415.3]);
+    expect(Math.abs(h.app.audio.voices[0].oscs[0].frequency.value - before)).toBeLessThan(0.01);
+    expect(h.app.audio.voices[1].oscs[0].frequency.value).toBeCloseTo(415.30, 1);
+  });
+
+  it('R16: "4:6" shows 2 : 3; "1.5:2" shows a visible inline error and keeps the chord', () => {
+    applyRatio('4:6');
+    expect(text('#header-title')).toBe('2 : 3');
+    applyRatio('1.5:2');
+    const err = h.$('#custom-ratio-error');
+    expect(err.hidden).toBe(false);
+    expect(err.textContent).toMatch(/whole numbers/i);
+    expect(text('#header-title')).toBe('2 : 3');
+    applyRatio('3:2');
+    expect(err.hidden).toBe(true);
+  });
+
+  it('R16: 8 voices are accepted with 8 distinct colors in the header', () => {
+    applyRatio('8:9:10:11:12:13:14:15');
+    const colors = [...h.$('#header-notes-badge').querySelectorAll(':scope > span')].map(s => s.style.color).filter(c => !c.includes('0.4'));
+    expect(colors.length).toBe(8);
+    expect(new Set(colors).size).toBe(8);
+  });
+
+  it('B: the readout says "real time" up to 30 Hz and "slowed ×N" above', () => {
+    expect(text('#val-slowmo')).toMatch(/^slowed ×\d+/);
+    setSlider('#slider-speed', 20); // ≈ 1.07 Hz
+    expect(text('#val-slowmo')).toBe('real time');
+    h.step(); // the figure picks up the new time scale on the next frame
+    expect(h.app.figure.k).toBe(1);
+  });
+
+  it('R18: in the app, clicks at 2 Hz come from the scheduler on the audio clock', () => {
+    setSlider('#slider-speed', (60 * Math.log(10)) / Math.log(150)); // C root = 2 Hz
+    h.frames(3);
+    h.audioLog.reset();
+    for (let i = 0; i < 120; i++) { h.app.clicks.tick(); h.step(25); }
+    const starts = (pitch) => h.audioLog.oscillators.filter(o => o.frequency.history[0] === pitch).map(o => o.startTime).sort((a, b) => a - b);
+    const x = starts(900);
+    const y = starts(600);
+    expect(x.length).toBeGreaterThan(8);
+    x.slice(1).forEach((t, i) => expect(Math.abs(t - x[i] - 0.25)).toBeLessThan(0.001));
+    y.slice(1).forEach((t, i) => expect(Math.abs(t - y[i] - 1 / 6)).toBeLessThan(0.001));
   });
 });

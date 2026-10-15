@@ -182,3 +182,33 @@ describe('R24: MIDI notes use the same voice factory as the drone', () => {
     expect(g1).toBeCloseTo(g2, 9);
   });
 });
+
+describe('G2.14: issues found in Phase 1', () => {
+  it('G2.14: the tube lowpass cutoff follows root changes', () => {
+    const a = engine(261.6256);
+    a.setTimbre('tube');
+    const lp = (v) => v.nodes.find(n => n.kind === 'filter');
+    expect(lp(a.voices[0]).frequency.value).toBeCloseTo(Math.min(261.6256 * 4, 8000), 6);
+    a.setRootFrequency(100);
+    expect(lp(a.voices[0]).frequency.value).toBeCloseTo(400, 6);
+    expect(lp(a.voices[1]).frequency.value).toBeCloseTo(600, 6);
+    a.setRootFrequency(5000);
+    expect(lp(a.voices[0]).frequency.value).toBe(8000);
+  });
+
+  it('G2.14: a MIDI note started while muted is heard after unmuting, before its note-off', async () => {
+    const { MidiSynth } = await import('../src/audio/midiSynth.js');
+    const a = engine();
+    a.setDroneEnabled(false);
+    const synth = new MidiSynth(a);
+    a.setMuted(true);
+    const note = { midi: 69, velocity: 0.8, time: 0, duration: 4 };
+    synth.noteOn(note);
+    expect(synth.voices.has(note)).toBe(true);
+    a.setMuted(false);
+    expect(a.masterGain.gain.value).toBeCloseTo(a.volume, 9);
+    const v = synth.voices.get(note);
+    expect(v.oscs[0].started && !v.oscs[0].stopped).toBe(true);
+    expect(v.gain.gain.value).toBeGreaterThan(0);
+  });
+});

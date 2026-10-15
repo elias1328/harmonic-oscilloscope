@@ -33,10 +33,14 @@ describe('AudioEngine (ported)', () => {
     assert.ok(Math.abs(a.voices[1].oscs[0].frequency.value - 391.995) < 0.01);
   });
 
-  it.fails('R4 BUG: 12-TET with custom-ratio notes ("H4","H5","H6") collapses all voices to the root pitch', () => {
+  // The Agent original fed the engine the semitones main.js used to build (all 0). The bug was
+  // in that construction; the app now builds custom voices with the voice model, so the test
+  // builds the notes the same way (parseCustomRatio -> voices) and keeps the assertion.
+  it('R4 BUG: 12-TET with custom-ratio notes ("H4","H5","H6") collapses all voices to the root pitch', async () => {
+    const { parseCustomRatio } = await import('../src/core/voices.js');
     const a = new AudioEngine(); a.init();
-    // what main.js syncAudio() builds for custom ratio 4:5:6
-    a.setNotes(['H4', 'H5', 'H6'].map((name, i) => ({ name, semitones: 0, justRatio: [1, 1.25, 1.5][i] })));
+    const chord = parseCustomRatio('4:5:6').chord;
+    a.setNotes(chord.voices.map(v => ({ name: v.label, semitones: v.semitones, justRatio: v.ji.value })));
     a.setTuning('equal'); a.setRootFrequency(200);
     const freqs = a.voices.map(v => v.oscs[0].frequency.value);
     assert.equal(new Set(freqs).size, 3);
@@ -74,7 +78,7 @@ describe('MediaImporter (ported)', () => {
     assert.equal(a.voices.length, 0, 'manual drone should be silent during media playback');
   });
 
-  it.fails('R6 BUG: MIDI demo octave segment (C4+C5) should be labeled OCTAVE 2 : 1', () => {
+  it('R6 BUG: MIDI demo octave segment (C4+C5) should be labeled OCTAVE 2 : 1', () => {
     const { m } = importer();
     const seen = [];
     m.onMidiStateChange = (_, info) => { if (seen.at(-1) !== info.title + '|' + info.category) seen.push(info.title + '|' + info.category); };
@@ -85,7 +89,7 @@ describe('MediaImporter (ported)', () => {
   });
 
   // The Agent original combined a passing check (parse + 4:5:6) and the R6 octave bug in one
-  // test; split in two so the passing part is not hidden behind it.fails.
+  // test; split in two so the passing part was not hidden behind an expected-failure marker.
   async function loadTestMidi() {
     const midi = new Midi();
     const tr = midi.addTrack();
@@ -104,7 +108,7 @@ describe('MediaImporter (ported)', () => {
     m.currentTime = 0.5; assert.equal(m.processMidiFrame().ratioInfo.title, '4 : 5 : 6');
   });
 
-  it.fails('R6 BUG: real .mid C4+C5 is labeled 2 : 1', async () => {
+  it('R6 BUG: real .mid C4+C5 is labeled 2 : 1', async () => {
     const { m } = await loadTestMidi();
     m.currentTime = 1.5; const r = m.processMidiFrame().ratioInfo;
     assert.equal(r.title, '2 : 1', 'BUG: octave mislabeled');

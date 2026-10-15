@@ -1,28 +1,29 @@
 // Ported from Agent/tests/unit.test.mjs (harmonics.js + Lissajous geometry sections).
-// Tests named "BUG:" assert the CORRECT behaviour. Those whose fix belongs to a later
-// phase are marked `it.fails` and tagged with their report ID.
+// Tests named "BUG:" assert the CORRECT behaviour (all fixed as of Phase 2).
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import {
-  gcd, simplifyRatio, semitoneToEqualTemperament, noteNameToSemitone,
-  identifyChordFromIntervals, INTERVALS_BY_SEMITONE, INTERVALS_SIMPLEST_FIRST, CHORD_PRESETS
-} from '../src/math/harmonics.js';
+import { noteNameToSemitone, identifyChord, INTERVALS_BY_SEMITONE, INTERVALS_SIMPLEST_FIRST, CHORD_PRESETS } from '../src/math/harmonics.js';
+import { gcd, reduce, Fraction } from '../src/core/fraction.js';
+import { chordFromPreset } from '../src/core/voices.js';
 
 describe('harmonics.js', () => {
-  it('gcd / simplifyRatio', () => {
+  // simplifyRatio / semitoneToEqualTemperament were removed (R29); same checks on their replacements.
+  it('gcd / reduce', () => {
     assert.equal(gcd(12, 8), 4);
-    assert.deepEqual(simplifyRatio(4, 6), [2, 3]);
-    assert.deepEqual(simplifyRatio(45, 32), [45, 32]);
+    assert.deepEqual(reduce(4, 6), [2, 3]);
+    assert.deepEqual(reduce(45, 32), [45, 32]);
   });
 
-  it('simplifyRatio(0,0) yields NaN (division by gcd 0)', () => {
-    const r = simplifyRatio(0, 0);
-    assert.ok(Number.isNaN(r[0]), 'documenting edge case');
+  it('reduce(0,0) is rejected (was NaN with simplifyRatio)', () => {
+    assert.throws(() => reduce(0, 0), RangeError);
+    assert.throws(() => new Fraction(1, 0), RangeError);
   });
 
-  it('12-TET multiplier', () => {
-    assert.equal(semitoneToEqualTemperament(12), 2);
-    assert.ok(Math.abs(semitoneToEqualTemperament(7) - 1.4983) < 1e-4);
+  it('12-TET multiplier (chord frequencies in equal temperament)', () => {
+    const octave = chordFromPreset(CHORD_PRESETS.find(p => p.id === 'octave')).freqs('equal');
+    assert.equal(octave[1] / octave[0], 2);
+    const fifth = chordFromPreset(CHORD_PRESETS[0]).freqs('equal');
+    assert.ok(Math.abs(fifth[1] / fifth[0] - 1.4983) < 1e-4);
   });
 
   it('noteNameToSemitone known + enharmonic names', () => {
@@ -55,92 +56,63 @@ describe('harmonics.js', () => {
     }
   });
 
+  // Presets are now Chords of Voices: the displayed ratioInts and the sounding JI ratios come
+  // from the same fractions (the old parallel notes/ratios/ratioInts/colors arrays are gone).
   it('CHORD_PRESETS: ratios equal ratioInts normalized to root', () => {
     for (const p of CHORD_PRESETS) {
-      assert.equal(p.notes.length, p.ratios.length, p.id);
-      assert.equal(p.notes.length, p.ratioInts.length, p.id);
-      assert.equal(p.notes.length, p.colors.length, p.id);
-      if (p.id === 'dissonance') continue; // checked separately
-      p.ratioInts.forEach((r, i) => {
-        assert.ok(Math.abs(r / p.ratioInts[0] - p.ratios[i]) < 1e-9, `${p.id}[${i}]`);
+      const c = chordFromPreset(p);
+      const ints = c.ratioInts();
+      assert.equal(c.size, p.labels.length, p.id);
+      assert.equal(ints.length, c.size, p.id);
+      assert.equal(c.colors().length, c.size, p.id);
+      ints.forEach((r, i) => {
+        assert.ok(Math.abs(r / ints[0] - c.voices[i].ji.value) < 1e-9, `${p.id}[${i}]`);
       });
     }
   });
 
-  it.fails('R19 BUG: dissonance preset ratioInts 15:16:17 disagree with its ratios 1 : 16/15 : 9/8 (= 120:128:135)', () => {
-    const p = CHORD_PRESETS.find(p => p.id === 'dissonance');
-    p.ratioInts.forEach((r, i) => {
-      assert.ok(Math.abs(r / p.ratioInts[0] - p.ratios[i]) < 1e-9, `index ${i}: ${r / p.ratioInts[0]} vs ${p.ratios[i]}`);
+  it('R19: dissonance preset ratioInts agree with its ratios 1 : 16/15 : 9/8 (= 120:128:135)', () => {
+    const c = chordFromPreset(CHORD_PRESETS.find(p => p.id === 'dissonance'));
+    const ints = c.ratioInts();
+    assert.deepEqual(ints, [120, 128, 135]);
+    ints.forEach((r, i) => {
+      assert.ok(Math.abs(r / ints[0] - c.voices[i].ji.value) < 1e-9, `index ${i}: ${r / ints[0]} vs ${c.voices[i].ji.value}`);
     });
+    assert.equal(c.meta.title, '120 : 128 : 135');
   });
 
-  it('identifyChordFromIntervals: known chords', () => {
-    assert.equal(identifyChordFromIntervals([0, 4, 7]).title, '4 : 5 : 6');
-    assert.equal(identifyChordFromIntervals([0, 3, 7]).title, '10 : 12 : 15');
-    assert.equal(identifyChordFromIntervals([0, 4, 7, 10]).title, '4 : 5 : 6 : 7');
-    assert.equal(identifyChordFromIntervals([0, 1, 2]).title, '15 : 16 : 17');
+  // identifyChordFromIntervals was replaced by identifyChord (absolute semitones / MIDI numbers).
+  it('identifyChord: known chords', () => {
+    assert.equal(identifyChord([0, 4, 7]).title, '4 : 5 : 6');
+    assert.equal(identifyChord([0, 3, 7]).title, '10 : 12 : 15');
+    assert.equal(identifyChord([0, 4, 7, 10]).title, '4 : 5 : 6 : 7');
+    // R19: the cluster label now matches its JI ratios 1 : 16/15 : 9/8 (was 15 : 16 : 17)
+    assert.equal(identifyChord([0, 1, 2]).title, '120 : 128 : 135');
   });
 
-  it.fails('R7 BUG: identifyChordFromIntervals is order/duplicate sensitive (C-G-E voicing, doubled root)', () => {
+  it('R7 BUG: identifyChord is order/duplicate insensitive (C-G-E voicing, doubled root)', () => {
     // MIDI path passes (midi - root) % 12 unsorted & with duplicates, e.g. C4 G4 E5 -> [0,7,4]
-    assert.equal(identifyChordFromIntervals([0, 7, 4]).category, 'A MAJOR CHORD');
+    assert.equal(identifyChord([0, 7, 4]).category, 'A MAJOR CHORD');
   });
 
-  it.fails('R7 BUG: C-E-G-C (doubled octave, demo final chord via %12) -> [0,4,7,0] not recognized', () => {
-    assert.equal(identifyChordFromIntervals([0, 4, 7, 0]).category, 'A MAJOR CHORD');
+  it('R7 BUG: C-E-G-C (doubled octave, demo final chord via %12) -> [0,4,7,0] recognized', () => {
+    assert.equal(identifyChord([0, 4, 7, 0]).category, 'A MAJOR CHORD');
   });
 
-  it('identifyChordFromIntervals custom fallback values', () => {
-    const r = identifyChordFromIntervals([0, 4, 7, 12]);
-    assert.deepEqual(r.ratioInts, [12, 15, 18, 24]);
-    assert.equal(r.category, 'CUSTOM CHORD');
-  });
-});
-
-// ---------- Lissajous geometry used by renderers ----------
-// NOTE: like the Agent original, these two tests re-implement the renderer formulas
-// inline (the renderers are not pure functions yet). Phase 2 introduces
-// src/render/lissajous.js; the tests must then be rewired to call it.
-describe('Lissajous geometry (renderer formulas)', () => {
-  // 2D lab & matrix draw x = sin(a t), y = cos(b t + phi). With phi = 0 the curve degenerates
-  // into an open, double-traced arc when a is odd and b is even.
-  function isDegenerate(a, b, phi = 0) {
-    // retrace symmetry t -> c - t with c = pi/a*k
-    const N = 400;
-    for (let k = 1; k < 2 * a; k += 2) {
-      const c = Math.PI * k / a;
-      let ok = true;
-      for (let i = 0; i < N && ok; i++) {
-        const t = (i / N) * 2 * Math.PI;
-        const dx = Math.sin(a * t) - Math.sin(a * (c - t));
-        const dy = Math.cos(b * t + phi) - Math.cos(b * (c - t) + phi);
-        if (Math.abs(dx) > 1e-9 || Math.abs(dy) > 1e-9) ok = false;
-      }
-      if (ok) return true;
-    }
-    return false;
-  }
-
-  it.fails('R8 BUG: at default phase 0, several interval figures are open (retraced) curves, not closed loops', () => {
-    const degenerate = INTERVALS_SIMPLEST_FIRST
-      .filter(i => isDegenerate(i.ratio[1], i.ratio[0]))
-      .map(i => `${i.name} ${i.ratio[0]}:${i.ratio[1]}`);
-    assert.deepEqual(degenerate, []);
-  });
-
-  // 2D renderer, 3+ notes: y uses cos(n3 * t * 0.8) -> non-integer frequency, never closes over 2pi
-  it.fails('R9 BUG: 2D 3-note "full loop" curve does not close (0.8 factor)', () => {
-    const [n1, n2, n3] = [4, 5, 6];
-    const f = (t) => [0.65 * Math.sin(n1 * t) + 0.35 * Math.sin(n3 * t), 0.65 * Math.cos(n2 * t) + 0.35 * Math.cos(n3 * t * 0.8)];
-    const [x0, y0] = f(0); const [x1, y1] = f(2 * Math.PI);
-    const gap = Math.hypot(x1 - x0, y1 - y0);
-    assert.ok(gap < 1e-6);
+  // The Agent original asserted the old buggy fallback ([0,4,7,12] -> CUSTOM 12:15:18:24).
+  // G2.7 requires C-E-G-C' to be recognised as 4 : 5 : 6; the fallback is tested separately.
+  it('R7: C-E-G-C\' (octave doubling) is the major chord 4 : 5 : 6', () => {
+    const r = identifyChord([0, 4, 7, 12]);
+    assert.deepEqual(r.ratioInts, [4, 5, 6]);
+    assert.equal(r.category, 'A MAJOR CHORD');
   });
 });
 
 // ---------- Phase 1 ----------
 describe('Phase 1: harmonics helpers', async () => {
-  const { intervalNotes, pianoSelectionFromNotes, PIANO_KEY_NAMES } = await import('../src/math/harmonics.js');
+  const { intervalNotes, PIANO_KEY_NAMES } = await import('../src/math/harmonics.js');
+  const { chordFromPianoKeys, parseCustomRatio, presetChord } = await import('../src/core/voices.js');
+  const pianoSelectionFromNotes = (keys) => chordFromPianoKeys(keys).pianoKeys();
 
   it("R13: the Octave interval loads C + C' (not C + C)", () => {
     const octave = INTERVALS_SIMPLEST_FIRST.find(i => i.name === 'Octave');
@@ -162,7 +134,8 @@ describe('Phase 1: harmonics helpers', async () => {
 
   it('R22: piano selection is derived from the current voices', () => {
     assert.deepEqual(pianoSelectionFromNotes(['C', 'E', 'G']), ['C', 'E', 'G']);
-    assert.deepEqual(pianoSelectionFromNotes(['H4', 'H5', 'H6']), [], 'custom ratios select no keys');
+    assert.deepEqual(parseCustomRatio('4:5:6').chord.pianoKeys(), [], 'custom ratios select no keys');
+    assert.deepEqual(presetChord('major_triad').pianoKeys(), ['C', 'E', 'G']);
     assert.deepEqual(pianoSelectionFromNotes(['C', 'E', 'G', 'C']), ['C', 'E', 'G'], 'duplicates collapse');
     assert.deepEqual(pianoSelectionFromNotes(['C', "C'"]), ['C', "C'"]);
     assert.deepEqual(pianoSelectionFromNotes([]), []);

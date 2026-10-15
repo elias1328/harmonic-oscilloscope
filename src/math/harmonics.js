@@ -1,4 +1,7 @@
-// Harmonic mathematics, intervals, chord presets, and tuning systems
+// Harmonic mathematics: note names, interval tables (exact fractions), chord presets and
+// chord identification. Data plus pure functions.
+
+import { Fraction, fractionsToInts } from '../core/fraction.js';
 
 export const ROOT_FREQ_DEFAULT = 261.6256; // C4 in Hz
 
@@ -131,105 +134,47 @@ export const INTERVALS_SIMPLEST_FIRST = [
   }
 ];
 
-export const CHORD_PRESETS = [
-  {
-    id: 'fifth',
-    title: '3 : 2',
-    category: 'A RATIO OF',
-    notes: ['C', 'G'],
-    ratios: [1, 1.5],
-    ratioInts: [2, 3],
-    colors: ['#ff5376', '#ff9f43'],
-    type: '2D',
-    consonance: 'Perfect Consonance',
-    description: 'G completes 3 cycles for every 2 cycles of C. The waveforms synchronize every 2 cycles of C, forming a stable 2-lobed Lissajous loop.'
-  },
-  {
-    id: 'octave',
-    title: '2 : 1',
-    category: 'AN OCTAVE',
-    notes: ['C', "C'"],
-    ratios: [1, 2],
-    ratioInts: [1, 2],
-    colors: ['#ff5376', '#ff6b8b'],
-    type: '2D',
-    consonance: 'Purest Consonance',
-    description: 'Double frequency (2:1). Creates the iconic figure-8 (infinity) Lissajous curve.'
-  },
-  {
-    id: 'major_triad',
-    title: '4 : 5 : 6',
-    category: 'A MAJOR CHORD',
-    notes: ['C', 'E', 'G'],
-    ratios: [1, 1.25, 1.5],
-    ratioInts: [4, 5, 6],
-    colors: ['#ff5376', '#2ecc71', '#ff9f43'],
-    type: '3D',
-    consonance: 'Universal Major Harmony',
-    description: 'The fundamental building block of Western music: Root (4), Major 3rd (5), Fifth (6). Weaves a symmetrical 3D Lissajous knot inside the bounding cube.'
-  },
-  {
-    id: 'minor_triad',
-    title: '10 : 12 : 15',
-    category: 'A MINOR CHORD',
-    notes: ['C', 'Eb', 'G'],
-    ratios: [1, 1.2, 1.5],
-    ratioInts: [10, 12, 15],
-    colors: ['#ff5376', '#e056fd', '#ff9f43'],
-    type: '3D',
-    consonance: 'Somber Minor Harmony',
-    description: 'Root (10), Minor 3rd (12), Fifth (15). Higher harmonic integers create a denser, darker 3D orbital mesh.'
-  },
-  {
-    id: 'sus4',
-    title: '6 : 8 : 9',
-    category: 'SUSPENDED 4TH',
-    notes: ['C', 'F', 'G'],
-    ratios: [1, 4/3, 1.5],
-    ratioInts: [6, 8, 9],
-    colors: ['#ff5376', '#f368e0', '#ff9f43'],
-    type: '3D',
-    consonance: 'Open Suspension',
-    description: 'Replaces the 3rd with the 4th (6:8:9), creating an open, ungrounded tension waiting to resolve.'
-  },
-  {
-    id: 'dominant7',
-    title: '4 : 5 : 6 : 7',
-    category: 'HARMONIC 7TH CHORD',
-    notes: ['C', 'E', 'G', 'Bb'],
-    ratios: [1, 1.25, 1.5, 1.75],
-    ratioInts: [4, 5, 6, 7],
-    colors: ['#ff5376', '#2ecc71', '#ff9f43', '#d980fa'],
-    type: '3D',
-    consonance: 'Dynamic Drive',
-    description: 'Natural harmonic series overtone chord (4:5:6:7). The 7th harmonic creates bluesy tension and chromatic shimmer.'
-  },
-  {
-    id: 'dissonance',
-    title: 'DISSONANCE',
-    category: 'C + Db + D',
-    notes: ['C', 'Db', 'D'],
-    ratios: [1, 16/15, 9/8],
-    ratioInts: [15, 16, 17],
-    colors: ['#ff5376', '#70a1ff', '#ffa502'],
-    type: '3D',
-    consonance: 'Extreme Dissonance / Cluster',
-    description: 'Clashing semitones produce chaotic acoustic beating and an undulating, tangled Lissajous wireframe that fills the space.'
-  }
-];
 
-export function gcd(a, b) {
-  return b === 0 ? a : gcd(b, a % b);
+// Exact just-intonation interval from the root, by semitone. 0 = unison, 12 = octave.
+// `ratio` is [hi, lo]; `ratioInts` is [lo, hi] (X cycles : Y cycles); `ji` is the Fraction hi/lo.
+const BY_SEMITONE_DATA = {
+  0:  { name: 'Unison',        ratio: [1, 1],   consonance: 'Identity',            description: 'The same pitch: a single straight line.' },
+  1:  { name: 'Minor Second',  ratio: [16, 15], consonance: 'Severe Dissonance',   description: 'Closest standard semitone. Intense acoustic interference and rapid beating.' },
+  2:  { name: 'Major Second',  ratio: [9, 8],   consonance: 'Moderate Dissonance', description: '9 cycles against 8. Creates a dense, tight Lissajous figure.' },
+  3:  { name: 'Minor Third',   ratio: [6, 5],   consonance: 'Somber Consonance',   description: '6 cycles against 5. Heart of the minor chord, warm and poignant.' },
+  4:  { name: 'Major Third',   ratio: [5, 4],   consonance: 'Sweet Consonance',    description: '5 cycles against 4. Pure tranquil harmony defining major tonality.' },
+  5:  { name: 'Fourth',        ratio: [4, 3],   consonance: 'Perfect Consonance',  description: '4 cycles against 3. Stable, foundational symmetry.' },
+  6:  { name: 'Tritone',       ratio: [45, 32], consonance: 'Extreme Dissonance',  description: '45 cycles against 32: close to, but not exactly, half an octave. A dense mesh.' },
+  7:  { name: 'Fifth',         ratio: [3, 2],   consonance: 'Perfect Consonance',  description: 'The foundation of tonal harmony. 3 cycles against 2.' },
+  8:  { name: 'Minor Sixth',   ratio: [8, 5],   consonance: 'Mild Consonance',     description: '8 cycles against 5. Rich, expansive harmonic depth.' },
+  9:  { name: 'Major Sixth',   ratio: [5, 3],   consonance: 'Bright Consonance',   description: '5 cycles against 3. Uplifting, harmonious overtone.' },
+  10: { name: 'Minor Seventh', ratio: [9, 5],   consonance: 'Mild Dissonance',     description: '9 cycles against 5. Dynamic forward harmonic momentum.' },
+  11: { name: 'Major Seventh', ratio: [15, 8],  consonance: 'Sharp Dissonance',    description: '15 cycles against 8. Strong acoustic yearning to resolve.' },
+  12: { name: 'Octave',        ratio: [2, 1],   consonance: 'Purest Consonance',   description: '2:1 double frequency. Waves synchronize on every cycle.' }
+};
+
+export const INTERVALS_BY_SEMITONE = Object.fromEntries(Object.entries(BY_SEMITONE_DATA).map(([k, d]) => [k, {
+  ...d,
+  ratioInts: [d.ratio[1], d.ratio[0]],
+  ji: new Fraction(d.ratio[0], d.ratio[1])
+}]));
+
+INTERVALS_SIMPLEST_FIRST.forEach(i => { i.ji = new Fraction(i.ratio[0], i.ratio[1]); });
+
+/** Just-intonation ratio of an interval of `semitones` (compound intervals keep their octaves). */
+export function jiForSemitones(semitones) {
+  const octaves = Math.floor(semitones / 12);
+  const r = semitones - 12 * octaves;
+  const base = INTERVALS_BY_SEMITONE[r].ji;
+  return octaves >= 0 ? base.mul(new Fraction(2 ** octaves, 1)) : base.mul(new Fraction(1, 2 ** -octaves));
 }
 
-export function simplifyRatio(a, b) {
-  const g = gcd(Math.round(a), Math.round(b));
-  return [Math.round(a) / g, Math.round(b) / g];
-}
+// Piano keys (C4 to C5). "C'" is the upper octave C.
+export const PIANO_KEY_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B', "C'"];
 
-// Convert semitones relative to C (0..12+) to 12-TET frequency multiplier
-export function semitoneToEqualTemperament(semitones) {
-  return Math.pow(2, semitones / 12);
+// Notes for an interval measured up from C. The octave's upper note is C', not a second C.
+export function intervalNotes(interval) {
+  return ['C', interval.semitones === 12 ? "C'" : interval.note];
 }
 
 // Map note name like 'C', 'C#', 'Db', 'Eb', etc., to semitone offset from C (0)
@@ -253,125 +198,109 @@ export function noteNameToSemitone(name) {
   return map[clean] !== undefined ? map[clean] : 0;
 }
 
-// Piano keys (C4 to C5). "C'" is the upper octave C.
-export const PIANO_KEY_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B', "C'"];
+// Known chords: pitch-class intervals above the chord root -> exact JI fractions.
+const F = (n, d = 1) => new Fraction(n, d);
+const KNOWN_CHORDS = [
+  { key: '0,4,7', quality: 'major', category: 'A MAJOR CHORD', consonance: 'Universal Major Harmony', ji: [F(1), F(5, 4), F(3, 2)], description: 'Major triad: Root (4), 3rd (5), 5th (6). Weaves a symmetrical 3D Lissajous knot.' },
+  { key: '0,3,7', quality: 'minor', category: 'A MINOR CHORD', consonance: 'Somber Minor Harmony', ji: [F(1), F(6, 5), F(3, 2)], description: 'Minor triad: Root (10), Minor 3rd (12), 5th (15). Higher harmonic integers create a darker 3D weave.' },
+  { key: '0,5,7', quality: 'sus4', category: 'SUSPENDED 4TH', consonance: 'Open Suspension', ji: [F(1), F(4, 3), F(3, 2)], description: 'Suspended 4th (6:8:9): open, unresolved space waiting to step down.' },
+  { key: '0,2,7', quality: 'sus2', category: 'SUSPENDED 2ND', consonance: 'Gentle Suspension', ji: [F(1), F(9, 8), F(3, 2)], description: 'Suspended 2nd (8:9:12): floating acoustic resonance.' },
+  { key: '0,3,6', quality: 'diminished', category: 'DIMINISHED CHORD', consonance: 'Tense Dissonance', ji: [F(1), F(6, 5), F(36, 25)], description: 'Stacked minor thirds creating unstable, suspenseful tension.' },
+  { key: '0,4,8', quality: 'augmented', category: 'AUGMENTED CHORD', consonance: 'Unstable Symmetry', ji: [F(1), F(5, 4), F(25, 16)], description: 'Stacked major thirds dividing the octave symmetrically.' },
+  { key: '0,4,7,10', quality: 'dominant7', category: 'DOMINANT 7TH', consonance: 'Dynamic Overtone Drive', ji: [F(1), F(5, 4), F(3, 2), F(7, 4)], description: 'Overtone 7th chord. The 7th harmonic creates strong bluesy pull.' },
+  { key: '0,3,7,10', quality: 'minor7', category: 'MINOR 7TH CHORD', consonance: 'Mellow Tension', ji: [F(1), F(6, 5), F(3, 2), F(9, 5)], description: 'Minor triad with a minor seventh on top.' },
+  { key: '0,4,7,11', quality: 'major7', category: 'MAJOR 7TH CHORD', consonance: 'Lush Tension', ji: [F(1), F(5, 4), F(3, 2), F(15, 8)], description: 'Major triad with a major seventh: 8:10:12:15.' },
+  { key: '0,1,2', quality: 'cluster', category: 'DISSONANCE CLUSTER', consonance: 'Extreme Dissonance', ji: [F(1), F(16, 15), F(9, 8)], description: 'Clashing chromatic semitones (1 : 16/15 : 9/8) forming dense, undulating moiré interference.' }
+];
+KNOWN_CHORDS.forEach(c => { c.tones = c.key.split(',').map(Number); c.ratioInts = fractionsToInts(c.ji); });
 
-// Notes for an interval measured up from C. The octave's upper note is C', not a second C.
-export function intervalNotes(interval) {
-  return ['C', interval.semitones === 12 ? "C'" : interval.note];
-}
+const ORDINAL = ['', '1ST', '2ND', '3RD'];
+const ratioTitle = (ints) => ints.join(' : ');
 
-// Piano selection derived from the current voices: only real piano keys, no duplicates.
-// Custom-ratio voices ("H4", ...) have no key, so they select nothing.
-export function pianoSelectionFromNotes(notes) {
-  return [...new Set((notes || []).filter(n => PIANO_KEY_NAMES.includes(n)))];
-}
-
-export const INTERVALS_BY_SEMITONE = {
-  1:  { name: 'Minor Second',  ratio: [16, 15], ratioInts: [15, 16], consonance: 'Severe Dissonance',  description: 'Closest standard semitone. Intense acoustic interference and rapid beating.' },
-  2:  { name: 'Major Second',  ratio: [9, 8],   ratioInts: [8, 9],   consonance: 'Moderate Dissonance', description: '9 cycles against 8. Creates a dense, tight Lissajous figure.' },
-  3:  { name: 'Minor Third',   ratio: [6, 5],   ratioInts: [5, 6],   consonance: 'Somber Consonance',   description: '6 cycles against 5. Heart of the minor chord, warm and poignant.' },
-  4:  { name: 'Major Third',   ratio: [5, 4],   ratioInts: [4, 5],   consonance: 'Sweet Consonance',    description: '5 cycles against 4. Pure tranquil harmony defining major tonality.' },
-  5:  { name: 'Fourth',        ratio: [4, 3],   ratioInts: [3, 4],   consonance: 'Perfect Consonance',  description: '4 cycles against 3. Stable, foundational symmetry.' },
-  6:  { name: 'Tritone',       ratio: [45, 32], ratioInts: [32, 45], consonance: 'Extreme Dissonance', description: 'The tritone divides the octave into tension with dense mesh.' },
-  7:  { name: 'Fifth',         ratio: [3, 2],   ratioInts: [2, 3],   consonance: 'Perfect Consonance',  description: 'The foundation of tonal harmony. 3 cycles against 2.' },
-  8:  { name: 'Minor Sixth',   ratio: [8, 5],   ratioInts: [5, 8],   consonance: 'Mild Consonance',     description: '8 cycles against 5. Rich, expansive harmonic depth.' },
-  9:  { name: 'Major Sixth',   ratio: [5, 3],   ratioInts: [3, 5],   consonance: 'Bright Consonance',   description: '5 cycles against 3. Uplifting, harmonious overtone.' },
-  10: { name: 'Minor Seventh', ratio: [9, 5],   ratioInts: [5, 9],   consonance: 'Mild Dissonance',     description: '9 cycles against 5. Dynamic forward harmonic momentum.' },
-  11: { name: 'Major Seventh', ratio: [15, 8],  ratioInts: [8, 15],  consonance: 'Sharp Dissonance',    description: '15 cycles against 8. Strong acoustic yearning to resolve.' },
-  12: { name: 'Octave',        ratio: [2, 1],   ratioInts: [1, 2],   consonance: 'Purest Consonance',   description: '2:1 double frequency. Waves synchronize on every cycle.' }
-};
-
-export function identifyChordFromIntervals(intervals) {
-  // intervals: e.g. [0, 4, 7] for Major, [0, 3, 7] for Minor, etc.
-  const key = intervals.join(',');
-
-  if (key === '0,4,7') {
-    return {
-      category: 'A MAJOR CHORD',
-      title: '4 : 5 : 6',
-      ratioInts: [4, 5, 6],
-      consonance: 'Universal Major Harmony',
-      description: 'Major triad: Root (4), 3rd (5), 5th (6). Weaves a symmetrical 3D Lissajous knot.'
-    };
+/**
+ * Identify a set of notes given as absolute semitones (MIDI numbers or piano semitones).
+ * - duplicates are removed and the notes sorted (order never matters);
+ * - two notes: the exact (compound) interval, e.g. C4+C5 = 2 : 1, C4+G5 = 3 : 1;
+ * - three or more pitch classes: every rotation is tried as the root, so inversions are
+ *   recognised (E-G-C = C major, 1st inversion, 4 : 5 : 6);
+ * - otherwise the exact product of the JI intervals above the bass, scaled to integers.
+ * `voiceJi[i]` is the JI ratio of `notes[i]` (sorted, unique) to the lowest note.
+ */
+export function identifyChord(input) {
+  const notes = [...new Set(input)].sort((a, b) => a - b);
+  if (notes.length === 0) {
+    return { kind: 'rest', notes, voiceJi: [], ratioInts: [], category: 'REST', title: 'SILENCE', consonance: 'Rest', description: 'No notes sounding.' };
   }
-  if (key === '0,3,7') {
-    return {
-      category: 'A MINOR CHORD',
-      title: '10 : 12 : 15',
-      ratioInts: [10, 12, 15],
-      consonance: 'Somber Minor Harmony',
-      description: 'Minor triad: Root (10), Minor 3rd (12), 5th (15). Higher harmonic integers create a darker 3D weave.'
-    };
+  const bass = notes[0];
+  if (notes.length === 1) {
+    return { kind: 'solo', notes, voiceJi: [F(1)], ratioInts: [1], category: 'ROOT NOTE', title: '1 : 1', consonance: 'Fundamental Pitch', description: 'A single voice: a straight 1D oscillation.' };
   }
-  if (key === '0,5,7') {
+  if (notes.length === 2) {
+    const diff = notes[1] - bass;
+    const ji = jiForSemitones(diff);
+    const base = INTERVALS_BY_SEMITONE[diff % 12];
+    let name = base.name;
+    if (diff % 12 === 0) name = diff === 12 ? 'Octave' : `${diff / 12} Octaves`;
+    else if (diff > 12) name = `Compound ${base.name}`;
     return {
-      category: 'SUSPENDED 4TH',
-      title: '6 : 8 : 9',
-      ratioInts: [6, 8, 9],
-      consonance: 'Open Suspension',
-      description: 'Suspended 4th (6:8:9): open, unresolved space waiting to step down.'
-    };
-  }
-  if (key === '0,2,7') {
-    return {
-      category: 'SUSPENDED 2ND',
-      title: '8 : 9 : 12',
-      ratioInts: [8, 9, 12],
-      consonance: 'Gentle Suspension',
-      description: 'Suspended 2nd (8:9:12): floating acoustic resonance.'
-    };
-  }
-  if (key === '0,3,6') {
-    return {
-      category: 'DIMINISHED CHORD',
-      title: '25 : 30 : 36',
-      ratioInts: [25, 30, 36],
-      consonance: 'Tense Dissonance',
-      description: 'Stacked minor thirds creating unstable, suspenseful tension.'
-    };
-  }
-  if (key === '0,4,8') {
-    return {
-      category: 'AUGMENTED CHORD',
-      title: '16 : 20 : 25',
-      ratioInts: [16, 20, 25],
-      consonance: 'Unstable Symmetry',
-      description: 'Stacked major thirds dividing the octave symmetrically.'
-    };
-  }
-  if (key === '0,4,7,10') {
-    return {
-      category: 'DOMINANT 7TH',
-      title: '4 : 5 : 6 : 7',
-      ratioInts: [4, 5, 6, 7],
-      consonance: 'Dynamic Overtone Drive',
-      description: 'Overtone 7th chord. The 7th harmonic creates strong bluesy pull.'
-    };
-  }
-  if (key === '0,1,2') {
-    return {
-      category: 'DISSONANCE CLUSTER',
-      title: '15 : 16 : 17',
-      ratioInts: [15, 16, 17],
-      consonance: 'Extreme Dissonance',
-      description: 'Clashing chromatic semitones forming dense, undulating moiré interference.'
+      kind: 'interval', notes, name,
+      voiceJi: [F(1), ji],
+      ratioInts: [ji.den, ji.num],
+      category: `AN INTERVAL (${name.toUpperCase()})`,
+      title: `${ji.num} : ${ji.den}`,
+      consonance: base.consonance,
+      description: `${ji.num} cycles of the upper note for every ${ji.den} of the lower. ${base.description}`
     };
   }
 
-  // Fallback for custom combinations
-  const ratioInts = intervals.map(semi => {
-    const intDef = INTERVALS_BY_SEMITONE[semi];
-    if (semi === 0) return 12;
-    if (intDef) return Math.round(12 * (intDef.ratio[0] / intDef.ratio[1]));
-    return Math.round(12 * Math.pow(2, semi / 12));
-  });
+  const pcs = [...new Set(notes.map(n => ((n % 12) + 12) % 12))];
+  if (pcs.length >= 3) {
+    const bassPc = ((bass % 12) + 12) % 12;
+    // try the bass first, then the other pitch classes as the root
+    const candidates = [bassPc, ...pcs.filter(p => p !== bassPc)];
+    for (const rootPc of candidates) {
+      const key = pcs.map(p => (p - rootPc + 12) % 12).sort((a, b) => a - b).join(',');
+      const known = KNOWN_CHORDS.find(c => c.key === key);
+      if (!known) continue;
+      // Voice each note: chord tone fraction × its octave above the root below the bass.
+      const rootRef = bass - ((bassPc - rootPc + 12) % 12);
+      const frac = (n) => {
+        const d = n - rootRef;
+        const oct = Math.floor(d / 12);
+        return known.ji[known.tones.indexOf(d - 12 * oct)].mul(F(2 ** oct));
+      };
+      const bassFrac = frac(bass);
+      const inversion = known.tones.indexOf((bassPc - rootPc + 12) % 12);
+      return {
+        kind: 'chord', notes, quality: known.quality, inversion, rootPc,
+        voiceJi: notes.map(n => frac(n).div(bassFrac)),
+        ratioInts: [...known.ratioInts],
+        category: inversion > 0 ? `${known.category} (${ORDINAL[inversion]} INVERSION)` : known.category,
+        title: ratioTitle(known.ratioInts),
+        consonance: known.consonance,
+        description: known.description
+      };
+    }
+  }
 
+  const voiceJi = notes.map(n => jiForSemitones(n - bass));
+  const ratioInts = fractionsToInts(voiceJi);
   return {
+    kind: 'custom', notes, voiceJi, ratioInts,
     category: 'CUSTOM CHORD',
-    title: ratioInts.join(' : '),
-    ratioInts: ratioInts,
+    title: ratioTitle(ratioInts),
     consonance: 'Custom Harmonic Cluster',
-    description: `Compound harmony of ${intervals.length} notes. Cycles weave together in complex multi-dimensional space.`
+    description: `Exact just-intonation product of ${notes.length} notes above the bass. Cycles weave together in multi-dimensional space.`
   };
 }
+
+// Presets: voices given as exact JI ratios to the root (semitones for 12-TET).
+export const CHORD_PRESETS = [
+  { id: 'fifth', category: 'A RATIO OF', labels: ['C', 'G'], semitones: [0, 7], ji: [[1, 1], [3, 2]], colors: ['#ff5376', '#ff9f43'], type: '2D', consonance: 'Perfect Consonance', description: 'G completes 3 cycles for every 2 cycles of C. The waveforms synchronize every 2 cycles of C, forming a stable 2-lobed Lissajous loop.' },
+  { id: 'octave', category: 'AN OCTAVE', labels: ['C', "C'"], semitones: [0, 12], ji: [[1, 1], [2, 1]], colors: ['#ff5376', '#ff6b8b'], type: '2D', consonance: 'Purest Consonance', description: 'Double frequency (2:1). Creates the iconic figure-8 (infinity) Lissajous curve.' },
+  { id: 'major_triad', category: 'A MAJOR CHORD', labels: ['C', 'E', 'G'], semitones: [0, 4, 7], ji: [[1, 1], [5, 4], [3, 2]], colors: ['#ff5376', '#2ecc71', '#ff9f43'], type: '3D', consonance: 'Universal Major Harmony', description: 'The fundamental building block of Western music: Root (4), Major 3rd (5), Fifth (6). Weaves a symmetrical 3D Lissajous knot inside the bounding cube.' },
+  { id: 'minor_triad', category: 'A MINOR CHORD', labels: ['C', 'Eb', 'G'], semitones: [0, 3, 7], ji: [[1, 1], [6, 5], [3, 2]], colors: ['#ff5376', '#e056fd', '#ff9f43'], type: '3D', consonance: 'Somber Minor Harmony', description: 'Root (10), Minor 3rd (12), Fifth (15). Higher harmonic integers create a denser, darker 3D orbital mesh.' },
+  { id: 'sus4', category: 'SUSPENDED 4TH', labels: ['C', 'F', 'G'], semitones: [0, 5, 7], ji: [[1, 1], [4, 3], [3, 2]], colors: ['#ff5376', '#f368e0', '#ff9f43'], type: '3D', consonance: 'Open Suspension', description: 'Replaces the 3rd with the 4th (6:8:9), creating an open, ungrounded tension waiting to resolve.' },
+  { id: 'dominant7', category: 'HARMONIC 7TH CHORD', labels: ['C', 'E', 'G', 'Bb'], semitones: [0, 4, 7, 10], ji: [[1, 1], [5, 4], [3, 2], [7, 4]], colors: ['#ff5376', '#2ecc71', '#ff9f43', '#d980fa'], type: '3D', consonance: 'Dynamic Drive', description: 'Natural harmonic series overtone chord (4:5:6:7). The 7th harmonic creates bluesy tension and chromatic shimmer.' },
+  { id: 'dissonance', category: 'DISSONANCE (C + Db + D)', labels: ['C', 'Db', 'D'], semitones: [0, 1, 2], ji: [[1, 1], [16, 15], [9, 8]], colors: ['#ff5376', '#70a1ff', '#ffa502'], type: '3D', consonance: 'Extreme Dissonance / Cluster', description: 'Clashing just semitones (1 : 16/15 : 9/8 = 120:128:135) produce chaotic acoustic beating and an undulating, tangled Lissajous wireframe that fills the space.' }
+];

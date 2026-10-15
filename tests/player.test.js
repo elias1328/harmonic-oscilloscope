@@ -237,3 +237,42 @@ describe('R25: failed imports leave no stale media behind', () => {
     expect(m.audioBuffer).toBe(null);
   });
 });
+
+describe('R15 (MIDI): processMidiFrame uses a moving index (G2.12)', () => {
+  it('R15: a 10,000-note file inspects < 200 notes per frame mid-song', async () => {
+    const midi = new Midi();
+    const tr = midi.addTrack();
+    for (let i = 0; i < 10000; i++) tr.addNote({ midi: 48 + (i % 24), time: i * 0.05, duration: 0.2 + (i % 3) * 0.1 });
+    const { m } = importer();
+    await m.loadMidiBuffer(midi.toArray().buffer, 'big.mid');
+    expect(m.midiNotes.length).toBe(10000);
+    let reads = 0;
+    const real = m.midiNotes;
+    m.midiNotes = new Proxy(real, { get(t, k) { if (typeof k === 'string' && /^\d+$/.test(k)) reads++; return t[k]; } });
+    m.play();
+    const counts = [];
+    // a jump into the middle (seek), then normal playback frames
+    m.seek(250);
+    for (let i = 0; i < 120; i++) {
+      reads = 0;
+      now += 16; m.update();
+      counts.push(reads);
+    }
+    expect(Math.max(...counts)).toBeLessThan(200);
+    // and the result is still right: notes sounding at the current time
+    const t = m.currentTime;
+    const expected = real.filter(n => n.time <= t && t < n.time + n.duration).length;
+    expect(m.processMidiFrame().activeNotes.length).toBe(expected);
+  });
+
+  it('R15: seeking backwards and looping still find the right notes', () => {
+    const { m } = importer();
+    m.loadBuiltInMidiDemo();
+    for (const t of [20, 3, 0.5, 24.9, 1]) {
+      m.currentTime = t;
+      const got = m.processMidiFrame().activeNotes.map(n => n.midi).sort();
+      const want = m.midiNotes.filter(n => n.time <= t && t < n.time + n.duration).map(n => n.midi).sort();
+      expect(got).toEqual(want);
+    }
+  });
+});

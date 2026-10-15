@@ -6,8 +6,14 @@ vi.mock('three', async (orig) => ({ ...(await orig()), WebGLRenderer: (await imp
 
 const { Oscilloscope3D } = await import('../src/visualizer/oscilloscope3D.js');
 
-const xyState = { audioMode: 'xy', xyPoints: Array.from({ length: 64 }, (_, i) => ({ x: Math.sin(i / 5), y: Math.cos(i / 7) })) };
-const chordState = { audioMode: 'midi', xyPoints: null, notes: ['C', 'G'], colors: ['#ff5376', '#ff9f43'], ratioInts: [2, 3], phase: 0, time: 0.3, drawMode: 'live' };
+const { Figure } = await import('../src/app/figure.js');
+const { presetChord } = await import('../src/core/voices.js');
+
+// Phase 2: renderers take a frame built on the shared figure model instead of the old state bag.
+const figure = new Figure();
+figure.sync({ chord: presetChord('fifth'), tuning: 'just', speedVal: 100, phi: 0, tClose: 4, traceReset: 0 }, 0);
+const xyState = { figure, t: 0, xyPoints: Array.from({ length: 64 }, (_, i) => ({ x: Math.sin(i / 5), y: Math.cos(i / 7) })) };
+const chordState = { figure, t: 0.3, xyPoints: null, labels: ['C', 'G'], colors: ['#ff5376', '#ff9f43'], drawMode: 'live' };
 
 describe('R14: 3D materials after X-Y mode', () => {
   it('R14: core line returns to white (and glow/corona to the voice color) on the next normal render', () => {

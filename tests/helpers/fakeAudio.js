@@ -18,11 +18,12 @@ export const audioLog = {
 };
 
 export class Param {
-  constructor(v = 0) { this.value = v; }
-  setValueAtTime(v) { this.value = v; }
-  linearRampToValueAtTime(v) { this.value = v; }
-  exponentialRampToValueAtTime(v) { this.value = v; }
-  setTargetAtTime(v) { this.value = v; }
+  constructor(v = 0) { this.value = v; this.history = []; }
+  _set(v) { this.value = v; this.history.push(v); }
+  setValueAtTime(v) { this._set(v); }
+  linearRampToValueAtTime(v) { this._set(v); }
+  exponentialRampToValueAtTime(v) { this._set(v); }
+  setTargetAtTime(v) { this._set(v); }
   cancelScheduledValues() {}
 }
 
@@ -64,7 +65,7 @@ export class FakeCtx {
     n.type = 'sine';
     n.started = false;
     n.stopped = false;
-    n.start = () => { n.started = true; };
+    n.start = (when = 0) => { n.started = true; n.startTime = when; };
     n.stop = () => { n.stopped = true; };
     audioLog.oscillators.push(n);
     return n;

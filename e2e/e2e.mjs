@@ -27,7 +27,10 @@ const GATES = {
   'G1.7': 'R12: with loop off, pressing Play after the end gives t < 1 s and the clock advances',
   'G1.8': 'R14: 3D after X-Y mode, then eject: the core line material is white (0xffffff)',
   'G1.9': 'R27: input accept, drop-overlay text and README list the same formats',
-  'G1.10': 'zero uncaught page errors over the full session'
+  'G1.10': 'zero uncaught page errors over the full session',
+  'G2.7': 'R6: the MIDI demo octave step is labeled 2 : 1',
+  'G2.8': 'R16: custom "4:6" shows 2 : 3; "1.5:2" shows a visible inline error',
+  'G2.9': 'B: "slowed ×N" readout visible above 30 Hz, "real time" below'
 };
 const gates = Object.fromEntries(Object.entries(GATES).map(([id, desc]) => [id, { desc, pass: null, details: [] }]));
 const gateResult = (id, ok, detail) => {
@@ -148,7 +151,7 @@ await section('presets', [], async () => {
   await clickPreset(1); // octave
   await page.click('#btn-draw-mode'); await wait(500);
   await shot('03-octave-full-loop-phi0');
-  await page.click('#btn-draw-mode');
+  await page.click('#btn-draw-mode'); await wait(100); // labels update on the next frame (store flush)
   log('draw mode toggles back to live', (await txt('#btn-draw-mode')).includes('Live') || (await page.locator('#btn-draw-mode').getAttribute('title') || '').includes('Live'));
 });
 
@@ -214,7 +217,12 @@ await section('piano', [], async () => {
   log('piano: G + C\' -> 4 : 3 Fourth', (await txt('#header-title')) === '4 : 3', await txt('#header-title'));
   await page.click('#btn-clear-piano');
   await key('C').click(); await key('Db').click(); await key('D').click(); await wait(200);
-  log('piano: C+Db+D -> 15:16:17 cluster', (await txt('#header-title')) === '15 : 16 : 17', await txt('#header-title'));
+  // R19 (Phase 2): the cluster label matches its JI ratios 1 : 16/15 : 9/8
+  log('piano: C+Db+D -> 120:128:135 cluster', (await txt('#header-title')) === '120 : 128 : 135', await txt('#header-title'));
+  await page.click('#btn-clear-piano');
+  await key('E').click(); await key('Ab').click(); await wait(200);
+  const eg = await txt('#header-notes-badge');
+  log('R4 piano E+G# shows 329.6 / 412.0 Hz (JI)', eg.includes('329.6') && eg.includes('412.0'), eg);
 });
 
 // ---------------- Custom ratio ----------------
@@ -226,6 +234,15 @@ await section('custom ratio', [], async () => {
   log('custom "abc" ignored', (await applyRatio('abc')) === before);
   log('custom "5" (single) ignored', (await applyRatio('5')) === before);
   log('custom "0:3" ignored (zero filtered)', (await applyRatio('0:3')) === before);
+  const t46 = await applyRatio('4:6');
+  const tDec = await applyRatio('1.5:2');
+  const errVisible = await visible('#custom-ratio-error');
+  const errText = await txt('#custom-ratio-error');
+  gateResult('G2.8', t46 === '2 : 3' && tDec === '2 : 3' && errVisible && /whole numbers/i.test(errText), `"4:6" -> "${t46}"; "1.5:2" -> title "${tDec}", error visible=${errVisible} "${errText}"`);
+  await shot('06-custom-ratio-error');
+  const t8 = await applyRatio('8:9:10:11:12:13:14:15');
+  log('custom 8 voices accepted', t8 === '8 : 9 : 10 : 11 : 12 : 13 : 14 : 15', t8);
+  await shot('06-custom-8-voices');
   await applyRatio('4:5:6');
   const key = (n) => page.locator(`[data-note="${n}"]`);
   await key('A').click(); await wait(200);
@@ -253,7 +270,11 @@ await section('timbre at 5 Hz', ['G1.2'], async () => {
   const clicksBefore = await page.evaluate(() => window.__osc.length);
   await wait(1500);
   log('polyrhythm zone (<20 Hz) generates click oscillators', (await page.evaluate(() => window.__osc.length)) > clicksBefore);
+  // G2.9 time-scale readout
+  const below = await txt('#val-slowmo');
   await setRange('#slider-speed', '100'); await wait(200);
+  const above = await txt('#val-slowmo');
+  gateResult('G2.9', below === 'real time' && /^slowed ×\d+/.test(above) && await visible('#val-slowmo'), `at 5.2 Hz "${below}", at 261.6 Hz "${above}"`);
 });
 
 // ---------------- 3D interaction & snapshot ----------------
@@ -295,6 +316,11 @@ await section('midi demo', ['G1.1', 'G1.6', 'G1.7'], async () => {
 
   const titles = new Set();
   for (let i = 0; i < 8; i++) { titles.add(`${await txt('#header-category')} | ${await txt('#header-title')}`); await wait(400); }
+  // G2.7: jump to the octave step (17.0–19.5 s) and read the header
+  await setRange('#player-scrubber', String((18.2 / 25) * 100)); await wait(500);
+  const octCat = await txt('#header-category'), octTitle = await txt('#header-title');
+  gateResult('G2.7', octTitle === '2 : 1' && /OCTAVE/.test(octCat), `MIDI demo at ~18.2 s: ${octCat} | ${octTitle}`);
+  await shot('09b-midi-demo-octave');
   note('MIDI demo header sequence (partial)', [...titles].join(' ;; '));
   log('R23 MIDI demo never shows SILENCE between steps', ![...titles].some(t => t.includes('SILENCE')));
   await shot('09-midi-demo-playing');

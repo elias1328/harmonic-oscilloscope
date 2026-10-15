@@ -1,13 +1,14 @@
 // 3D Oscilloscope Visualizer: Three.js 3D Lissajous curve inside a wireframe bounding cube,
-// with orbit controls, sliding glowing orbs along 3 axes, and extrema detection.
+// with orbit controls and glowing orbs sliding along the 3 axes (voices 0/1/2). Points come from
+// the shared figure model (src/app/figure.js on src/render/lissajous.js).
 
 import * as THREE from 'three';
+import { makeProjector, project } from '../render/lissajous.js';
 
 export class Oscilloscope3D {
   constructor(container, options = {}) {
     this.container = container;
     this.options = options;
-    this.onExtrema = options.onExtrema || null;
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
@@ -40,8 +41,6 @@ export class Oscilloscope3D {
     this.setupCurveObjects();
     this.setupAxisOrbs();
     this.bindEvents();
-
-    this.prevVelocities = [0, 0, 0];
   }
 
   setupCube() {
@@ -134,6 +133,7 @@ export class Oscilloscope3D {
 
   clearPath() {
     this.liveTrail = [];
+    this.lastT = null;
     if (this.curveGeometry) {
       this.curveGeometry.setDrawRange(0, 0);
     }
@@ -188,164 +188,96 @@ export class Oscilloscope3D {
     this.renderer.setSize(w, h);
   }
 
-  render(state) {
-    // Check if renderer needs resize
-    if (this.renderer.domElement.width === 0 && window.innerWidth > 0) {
-      this.resize(window.innerWidth, window.innerHeight);
-    }
-
-    const time = state.time || 0;
-    const colors = state.colors || ['#ff5376', '#2ecc71', '#ff9f43'];
-    const phase = state.phase || 0;
-    const notes = state.notes || [];
-    const drawMode = state.drawMode || 'live';
-
-    // Smooth camera orbit
+  updateCamera() {
     if (this.autoRotate && !this.isDragging) {
       this.targetRotation.y += 0.0025;
     }
     this.rotation.x += (this.targetRotation.x - this.rotation.x) * 0.1;
     this.rotation.y += (this.targetRotation.y - this.rotation.y) * 0.1;
     this.distance += (this.targetDistance - this.distance) * 0.1;
-
     this.camera.position.x = this.distance * Math.sin(this.rotation.y) * Math.cos(this.rotation.x);
     this.camera.position.y = this.distance * Math.sin(this.rotation.x);
     this.camera.position.z = this.distance * Math.cos(this.rotation.y) * Math.cos(this.rotation.x);
     this.camera.lookAt(0, 0, 0);
+  }
 
-    // If in audio X-Y vectorscope mode (MP3 / stereo audio)
-    if (state.audioMode === 'xy' && state.xyPoints && state.xyPoints.length > 0) {
-      this.renderXYVectorscope3D(state);
+  /** frame: { figure, t (clock s), drawMode, colors, xyPoints? } */
+  render(frame) {
+    if (this.renderer.domElement.width === 0 && window.innerWidth > 0) {
+      this.resize(window.innerWidth, window.innerHeight);
+    }
+    this.updateCamera();
+
+    if (frame.xyPoints) {
+      this.renderXYVectorscope3D(frame.xyPoints);
       this.renderer.render(this.scene, this.camera);
       return;
     }
 
-    const ratioInts = state.ratioInts || [2, 3];
-    const n1 = ratioInts[0] || 1;
-    const n2 = ratioInts[1] || 1;
-    const n3 = ratioInts[2] || (notes.length >= 3 ? 6 : null);
-    const n4 = ratioInts[3] || null;
+    const { figure, t, drawMode } = frame;
+    const colors = frame.colors || [];
+    const n = figure.size;
+    const head = n ? figure.pointAt(t, 3) : [0, 0, 0];
+    const sines = n ? figure.sinesAt(t) : [];
+    this.tracerGroup.position.set(head[0], head[1], head[2]);
+    this.tracerGroup.visible = n > 0;
 
-    // Instantaneous 3D tracer orb position
-    const theta = (2 * Math.PI * time);
-    let curX = 0;
-    let curY = 0;
-    let curZ = 0;
-
-    if (notes.length <= 1) {
-      // 1 Note: 1D oscillation along X axis
-      curX = Math.sin(theta);
-      curY = 0;
-      curZ = 0;
-    } else if (notes.length === 2) {
-      // 2 Notes: Symmetrical closed loop in 3D space
-      curX = Math.sin(n1 * theta);
-      curY = Math.cos(n2 * theta + phase);
-      curZ = 0;
-    } else {
-      // 3+ Notes: 3D Lissajous knot
-      curX = Math.sin(n1 * theta);
-      curY = Math.cos(n2 * theta + phase);
-      curZ = Math.sin((n3 || 1) * theta + phase * 0.5);
-
-      if (n4 !== null) {
-        const mod = 1.0 + 0.15 * Math.sin(n4 * theta);
-        curX *= mod;
-        curY *= mod;
-        curZ *= mod;
+    // Axis orbs on the cube edges, one per voice (0/1/2), in the voice colours
+    const orbPos = [
+      (v) => [v, -1.02, -1.02],
+      (v) => [-1.02, v, -1.02],
+      (v) => [-1.02, -1.02, v]
+    ];
+    this.axisOrbs.forEach((orb, i) => {
+      orb.visible = n > i;
+      if (n > i) {
+        orb.position.set(...orbPos[i](sines[i]));
+        orb.material.color.set(colors[i] || '#ffffff');
       }
-    }
+    });
 
-    this.tracerGroup.position.set(curX, curY, curZ);
-
-    // Axis orbs on cube edges
-    if (this.axisOrbs[0]) {
-      this.axisOrbs[0].visible = notes.length > 0;
-      this.axisOrbs[0].position.set(curX, -1.02, -1.02);
-    }
-    if (this.axisOrbs[1]) {
-      this.axisOrbs[1].visible = notes.length > 1;
-      this.axisOrbs[1].position.set(-1.02, curY, -1.02);
-    }
-    if (this.axisOrbs[2]) {
-      this.axisOrbs[2].visible = notes.length > 2;
-      this.axisOrbs[2].position.set(-1.02, -1.02, curZ);
-    }
-
-    // Extrema detection for polyrhythm clicks
-    const velX = Math.cos(n1 * theta);
-    const velY = notes.length > 1 ? -Math.sin(n2 * theta + phase) : 0;
-    const velZ = notes.length > 2 ? Math.cos((n3 || 1) * theta + phase * 0.5) : 0;
-
-    if (this.prevVelocities[0] * velX < 0 && this.onExtrema) this.onExtrema(0);
-    if (notes.length > 1 && this.prevVelocities[1] * velY < 0 && this.onExtrema) this.onExtrema(1);
-    if (notes.length > 2 && this.prevVelocities[2] * velZ < 0 && this.onExtrema) this.onExtrema(2);
-
-    this.prevVelocities[0] = velX;
-    this.prevVelocities[1] = velY;
-    this.prevVelocities[2] = velZ;
-
-    // Curve Line Rendering: Live Progressive Trace vs Full Pre-rendered Loop
     const posArray = this.curveGeometry.attributes.position.array;
-
-    if (drawMode === 'live') {
-      // Accumulate real-time positions as the orb traverses the knot
-      const last = this.liveTrail[this.liveTrail.length - 1];
-      if (!last || Math.hypot(last.x - curX, last.y - curY, last.z - curZ) > 0.015) {
-        this.liveTrail.push({ x: curX, y: curY, z: curZ });
-        if (this.liveTrail.length > this.maxPoints) {
-          this.liveTrail.shift();
+    if (!n) {
+      this.curveGeometry.setDrawRange(0, 0);
+    } else if (drawMode === 'live') {
+      if (figure.resetVersion !== this.traceKey || this.lastT === null || this.lastT === undefined || t < this.lastT) {
+        this.traceKey = figure.resetVersion;
+        this.liveTrail = [head.slice()];
+      } else {
+        // analytic sub-steps between frames (no straight-line polygons for dense ratios)
+        for (const ts of figure.substeps(this.lastT, t, 0.08, 200)) {
+          const p = figure.pointAt(ts, 3);
+          const last = this.liveTrail[this.liveTrail.length - 1];
+          if (!last || Math.hypot(last[0] - p[0], last[1] - p[1], last[2] - p[2]) > 0.006) this.liveTrail.push(p);
         }
+        if (this.liveTrail.length > this.maxPoints) this.liveTrail.splice(0, this.liveTrail.length - this.maxPoints);
       }
-
+      this.lastT = t;
       const count = this.liveTrail.length;
       for (let i = 0; i < count; i++) {
-        posArray[i * 3] = this.liveTrail[i].x;
-        posArray[i * 3 + 1] = this.liveTrail[i].y;
-        posArray[i * 3 + 2] = this.liveTrail[i].z;
+        posArray[i * 3] = this.liveTrail[i][0];
+        posArray[i * 3 + 1] = this.liveTrail[i][1];
+        posArray[i * 3 + 2] = this.liveTrail[i][2];
       }
-
       this.curveGeometry.setDrawRange(0, count);
       this.curveGeometry.attributes.position.needsUpdate = true;
       this.glowMat.opacity = 0.55;
       this.coreMat.opacity = 0.85;
     } else {
-      // Full Static Pre-rendered Mode
+      this.lastT = null;
+      // One closed period from the current phases (exact closure in just intonation)
       const numPoints = 2400;
-      const period = 2 * Math.PI;
-
+      const proj = makeProjector(n, 3);
+      const th0 = figure.phasesAt(t);
+      const w = figure.model.freqs.map((_, i) => figure.model.omega(i));
+      const T = figure.period;
       for (let i = 0; i < numPoints; i++) {
-        const tau = (i / (numPoints - 1)) * period;
-        let px = 0;
-        let py = 0;
-        let pz = 0;
-
-        if (notes.length <= 1) {
-          px = Math.sin(tau);
-          py = 0;
-          pz = 0;
-        } else if (notes.length === 2) {
-          px = Math.sin(n1 * tau);
-          py = Math.cos(n2 * tau + phase);
-          pz = 0;
-        } else {
-          px = Math.sin(n1 * tau);
-          py = Math.cos(n2 * tau + phase);
-          pz = Math.sin((n3 || 1) * tau + phase * 0.5);
-
-          if (n4 !== null) {
-            const mod = 1.0 + 0.15 * Math.sin(n4 * tau);
-            px *= mod;
-            py *= mod;
-            pz *= mod;
-          }
-        }
-
-        posArray[i * 3] = px;
-        posArray[i * 3 + 1] = py;
-        posArray[i * 3 + 2] = pz;
+        const dt = (T * i) / (numPoints - 1);
+        const p = project(th0.map((ph, j) => ph + w[j] * dt), proj);
+        posArray[i * 3] = p[0];
+        posArray[i * 3 + 1] = p[1];
+        posArray[i * 3 + 2] = p[2];
       }
-
       this.curveGeometry.setDrawRange(0, numPoints);
       this.curveGeometry.attributes.position.needsUpdate = true;
       this.glowMat.opacity = 0.75;
@@ -353,18 +285,16 @@ export class Oscilloscope3D {
     }
 
     // Dynamic color matching (and undo any X-Y vectorscope colouring of the core line)
-    const primaryColor = notes.length > 1 ? (colors[1] || '#ff9f43') : (colors[0] || '#ff5376');
+    const primaryColor = n > 1 ? (colors[1] || '#ff9f43') : (colors[0] || '#ff5376');
     this.coreMat.color.setHex(0xffffff);
     this.glowMat.color.set(primaryColor);
     this.coronaMat.color.set(primaryColor);
-    this.tracerGroup.visible = true;
 
     this.renderer.render(this.scene, this.camera);
   }
 
   // Dedicated 3D hardware X-Y stereo vectorscope renderer (sweeps time along Z-axis)
-  renderXYVectorscope3D(state) {
-    const pts = state.xyPoints;
+  renderXYVectorscope3D(pts) {
     if (!pts || pts.length === 0) return;
 
     const count = Math.min(pts.length, this.maxPoints);

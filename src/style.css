@@ -336,6 +336,30 @@ input[type="range"]::-webkit-slider-thumb:hover {
   box-shadow: 0 0 10px rgba(254, 202, 87, 0.3);
 }
 
+.ratio-input-wrapper input.invalid {
+  border-color: var(--accent-pink);
+  box-shadow: 0 0 10px rgba(255, 83, 118, 0.3);
+}
+
+.ratio-error {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--accent-pink);
+}
+
+#val-slowmo {
+  text-transform: none;
+}
+
+.control-sub {
+  margin-left: 6px;
+  font-family: var(--font-mono);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
 .ratio-input-wrapper button {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid var(--panel-border);

@@ -202,6 +202,7 @@ export class AudioEngine {
       osc.start(t);
       voice.oscs.push(osc);
       voice.nodes.push(shaper, lowpass);
+      voice.lowpass = lowpass;
     } else if (this.timbre === 'epiano') {
       // Fundamental + soft bell harmonic (3rd harmonic)
       const osc1 = ctx.createOscillator();
@@ -321,49 +322,54 @@ export class AudioEngine {
           osc.frequency.setTargetAtTime(i === 0 ? oscFreq : oscFreq * 3, t, 0.03);
         } catch { /* param not automatable */ }
       });
+      if (v.lowpass) {
+        // the tube's lowpass tracks the pitch (4th harmonic, capped at 8 kHz)
+        try { v.lowpass.frequency.setTargetAtTime(Math.min(oscFreq * 4, 8000), t, 0.03); } catch { /* param not automatable */ }
+      }
       try {
         v.gain.gain.setTargetAtTime(baseLevel, t, 0.03);
       } catch { /* param not automatable */ }
     });
   }
 
-  // Trigger a percussive woodblock click when an axis ball bounces in slow-motion
-  // Exactly as requested: stops completely on about 20-30 Hertz!
-  triggerPolyrhythmClick(axisIndex) {
-    if (!this.ctx || this.isMuted) return;
-    if (this.currentHz >= 30) return; // Completely stopped above 30 Hz!
-
-    // Fade down click volume between 20 Hz and 30 Hz
-    let clickGainScale = 1.0;
-    if (this.currentHz >= 20) {
-      clickGainScale = 1.0 - (this.currentHz - 20) / 10.0;
-    }
-    if (clickGainScale <= 0.01) return;
-
-    const t = this.ctx.currentTime;
+  // Percussive woodblock click for voice `axisIndex`, started exactly at audio time `when`.
+  // Scheduling (which extrema, the 30 Hz cut-off, the 20-30 Hz fade) is the ClickScheduler's job.
+  scheduleClick(axisIndex, when, gainScale = 1) {
+    if (!this.ctx || this.isMuted || gainScale <= 0.01) return null;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
     const filter = this.ctx.createBiquadFilter();
 
     const pitch = this.polyrhythmPitches[axisIndex % this.polyrhythmPitches.length];
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(pitch, t);
-    osc.frequency.exponentialRampToValueAtTime(pitch * 0.35, t + 0.045);
+    osc.frequency.setValueAtTime(pitch, when);
+    osc.frequency.exponentialRampToValueAtTime(pitch * 0.35, when + 0.045);
 
     filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(pitch, t);
-    filter.Q.setValueAtTime(2.0, t);
+    filter.frequency.setValueAtTime(pitch, when);
+    filter.Q.setValueAtTime(2.0, when);
 
-    const clickVol = Math.max(0.4, this.volume) * clickGainScale;
-    gain.gain.setValueAtTime(clickVol, t);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.045);
+    const clickVol = Math.max(0.4, this.volume) * gainScale;
+    gain.gain.setValueAtTime(clickVol, when);
+    gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.045);
 
     osc.connect(filter);
     filter.connect(gain);
     gain.connect(this.masterGain);
 
-    osc.start(t);
-    osc.stop(t + 0.05);
+    osc.start(when);
+    osc.stop(when + 0.05);
+    osc.onended = () => { try { osc.disconnect(); filter.disconnect(); gain.disconnect(); } catch { /* gone */ } };
+    return osc;
+  }
+
+  // Immediate click, gated by the current root frequency (silent at 30 Hz and above, fading
+  // out from 20 Hz).
+  triggerPolyrhythmClick(axisIndex) {
+    if (!this.ctx || this.isMuted) return null;
+    if (this.currentHz >= 30) return null;
+    const scale = this.currentHz >= 20 ? 1.0 - (this.currentHz - 20) / 10.0 : 1.0;
+    return this.scheduleClick(axisIndex, this.ctx.currentTime, scale);
   }
 
   getWaveformData() {

@@ -76,7 +76,9 @@ export async function bootApp() {
     },
     frames(n, ms = 16) { for (let i = 0; i < n; i++) h.step(ms); },
     $(sel) { return document.querySelector(sel); },
-    click(sel) { document.querySelector(sel).dispatchEvent(new window.MouseEvent('click', { bubbles: true })); },
+    // Store notifications are batched per animation frame; deliver them so the DOM reflects the action.
+    flush() { app.store.flush(); },
+    click(sel) { document.querySelector(sel).dispatchEvent(new window.MouseEvent('click', { bubbles: true })); app.store.flush(); },
     /** First user gesture: unlocks the AudioContext like a real pointerdown. */
     unlock() { window.dispatchEvent(new window.Event('pointerdown')); },
     async uploadFile(name, bytes) {
@@ -86,6 +88,7 @@ export async function bootApp() {
       input.dispatchEvent(new window.Event('change', { bubbles: true }));
       // let the async loader settle
       for (let i = 0; i < 10; i++) await new Promise(r => setTimeout(r, 0));
+      app.store.flush();
     }
   };
   h.step(16);

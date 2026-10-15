@@ -1,5 +1,6 @@
 // 12-Interval "Simplest First" Matrix View (recreating Image 2)
 import { INTERVALS_SIMPLEST_FIRST } from '../math/harmonics.js';
+import { closedCurve, voiceOffsets } from '../render/lissajous.js';
 
 const CARD_CSS_SIZE = 180; // fallback when the grid is hidden (display: none) at build time
 
@@ -67,10 +68,9 @@ export class IntervalsGrid {
 
       ctx.clearRect(0, 0, w, h);
 
-      // Draw Lissajous loop (matching exact reel closed figures)
-      const f1 = item.ratio[1]; // Root note (X axis)
-      const f2 = item.ratio[0]; // Interval note (Y axis)
-      const steps = 800;
+      // One closed period of the interval (root on X, interval note on Y), non-degenerate at φ = 0
+      const ints = [item.ratio[1], item.ratio[0]];
+      const pts = closedCurve(ints, voiceOffsets(ints, 0), 2, 800);
 
       ctx.save();
       // Outer glow
@@ -80,13 +80,12 @@ export class IntervalsGrid {
       ctx.lineWidth = 1.8;
       ctx.beginPath();
 
-      for (let i = 0; i <= steps; i++) {
-        const t = (i / steps) * 2 * Math.PI;
-        const x = cx + Math.sin(f1 * t) * radius;
-        const y = cy + Math.cos(f2 * t) * radius;
+      pts.forEach((p, i) => {
+        const x = cx + p[0] * radius;
+        const y = cy + p[1] * radius; // same orientation as the lab view
         if (i === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
-      }
+      });
       ctx.stroke();
 
       // Bright inner core

@@ -3,16 +3,15 @@
 
 import { Midi } from '@tonejs/midi';
 import { autoCorrelate, freqToMidi } from './pitchDetector.js';
-import { INTERVALS_BY_SEMITONE, identifyChordFromIntervals, NOTE_NAMES, NOTE_COLORS } from '../math/harmonics.js';
+import { NOTE_NAMES } from '../math/harmonics.js';
+import { chordFromMidiNotes } from '../core/voices.js';
+import { MAX_FRAME_DT } from '../core/clock.js';
 import { parseHeaderSampleRate } from './audioFormats.js';
+import { MidiSynth } from './midiSynth.js';
 
-// Largest clock step per frame (s): a backgrounded tab or a stall must not jump playback.
-export const MAX_FRAME_DT = 0.1;
+export { MAX_FRAME_DT };
 // Pitch detection (O(N²) autocorrelation) runs at most this often.
 const PITCH_INTERVAL_MS = 50;
-const MIDI_RELEASE = 0.08;
-
-const midiToHz = (midi) => 440 * Math.pow(2, (midi - 69) / 12);
 
 export class MediaImporter {
   constructor(audioEngine) {
@@ -34,7 +33,8 @@ export class MediaImporter {
     // MIDI specific state
     this.midiData = null;
     this.midiNotes = []; // Flat sorted array of { midi, name, time, duration, velocity }
-    this.activeMidiVoices = new Map(); // note instance -> voice (see AudioEngine.createVoice)
+    this.synth = new MidiSynth(audioEngine);
+    this.resetNoteCursor();
 
     // Audio specific state
     this.audioBuffer = null;
@@ -44,6 +44,49 @@ export class MediaImporter {
     this.audioMode = 'xy'; // 'xy' | 'pitch'
     this.lastPitchTime = -Infinity;
     this.lastPitchInfo = null;
+  }
+
+  // note instance -> voice of the notes currently sounding
+  get activeMidiVoices() {
+    return this.synth.voices;
+  }
+
+  // Moving-index note lookup: notes are sorted by start time; `cursor` is the first note not yet
+  // started and `activeNotes` the started ones. Jumps (seek, loop) re-locate by binary search.
+  resetNoteCursor() {
+    this.cursor = 0;
+    this.cursorT = null;
+    this.activeNotes = [];
+    this.maxDuration = this.midiNotes.reduce((m, n) => Math.max(m, n.duration), 0);
+  }
+
+  updateActiveNotes(t) {
+    const notes = this.midiNotes;
+    if (this.cursorT === null || t < this.cursorT || t - this.cursorT > 1) {
+      let lo = 0;
+      let hi = notes.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (notes[mid].time <= t) lo = mid + 1; else hi = mid;
+      }
+      this.cursor = lo;
+      this.activeNotes = [];
+      for (let j = lo - 1; j >= 0; j--) {
+        const n = notes[j];
+        if (n.time < t - this.maxDuration) break;
+        if (t < n.time + n.duration) this.activeNotes.unshift(n);
+      }
+    } else {
+      while (this.cursor < notes.length) {
+        const n = notes[this.cursor];
+        if (n.time > t) break;
+        this.activeNotes.push(n);
+        this.cursor++;
+      }
+      this.activeNotes = this.activeNotes.filter(n => t < n.time + n.duration);
+    }
+    this.cursorT = t;
+    return this.activeNotes;
   }
 
   // Ensure the AudioContext exists. No side effects on the manual drone.
@@ -61,6 +104,7 @@ export class MediaImporter {
     this.currentTime = 0;
     this.midiData = null;
     this.midiNotes = [];
+    this.resetNoteCursor();
     this.audioBuffer = null;
     this.lastPitchInfo = null;
   }
@@ -113,6 +157,7 @@ export class MediaImporter {
       // Sort notes chronologically
       allNotes.sort((a, b) => a.time - b.time);
       this.midiNotes = allNotes;
+      this.resetNoteCursor();
 
       const duration = midi.duration || (allNotes.length ? allNotes[allNotes.length - 1].time + 2 : 10);
       const bpm = midi.header.tempos && midi.header.tempos.length > 0 ? Math.round(midi.header.tempos[0].bpm) : 120;
@@ -298,27 +343,17 @@ export class MediaImporter {
   // ----------------------------------------------------
   // MIDI SYNTHESIS & VOICE HANDLING
   // ----------------------------------------------------
-  // `note` is a note instance (not a pitch), so back-to-back notes of the same pitch retrigger.
+  // Note instances (not pitches) key the voices, so same-pitch notes retrigger.
   triggerMidiNoteOn(note) {
-    if (!this.ctx || this.audioEngine.isMuted) return;
-    // Same voice factory (and so the same timbres) as the manual drone. The master volume is
-    // applied once, by the engine's master gain.
-    const level = 0.25 * (note.velocity || 0.8);
-    const pan = Math.max(-0.8, Math.min(0.8, (note.midi - 60) / 36)); // pan by pitch
-    const voice = this.audioEngine.createVoice(midiToHz(note.midi), level, { pan, attack: 0.015 });
-    this.activeMidiVoices.set(note, voice);
+    this.synth.noteOn(note);
   }
 
   triggerMidiNoteOff(note) {
-    const voice = this.activeMidiVoices.get(note);
-    if (!voice || !this.ctx) return;
-    this.audioEngine.releaseVoice(voice, MIDI_RELEASE);
-    this.activeMidiVoices.delete(note);
+    this.synth.noteOff(note);
   }
 
   stopMidiVoices() {
-    this.activeMidiVoices.forEach(voice => this.audioEngine.releaseVoice(voice, 0.015));
-    this.activeMidiVoices.clear();
+    this.synth.stopAll();
   }
 
   // ----------------------------------------------------
@@ -372,116 +407,27 @@ export class MediaImporter {
 
   // Process MIDI active notes & chord calculation at current timestamp
   processMidiFrame() {
-    const t = this.currentTime;
-    const active = [];
-    const activeSet = new Set();
-
-    // Collect currently sounding notes
-    for (let i = 0; i < this.midiNotes.length; i++) {
-      const n = this.midiNotes[i];
-      if (n.time <= t && t < n.time + n.duration) {
-        active.push(n);
-        activeSet.add(n);
-      }
-      if (n.time > t + 2) break; // Optimization
-    }
+    const active = [...this.updateActiveNotes(this.currentTime)];
+    const activeSet = new Set(active);
 
     // Trigger synthesis noteOn/noteOff diffs during playback, keyed by note instance
     if (this.isPlaying) {
       // Note Off for finished notes (first, so a same-pitch successor retriggers cleanly)
-      this.activeMidiVoices.forEach((_, n) => {
-        if (!activeSet.has(n)) {
-          this.triggerMidiNoteOff(n);
-        }
+      this.synth.voices.forEach((_, n) => {
+        if (!activeSet.has(n)) this.synth.noteOff(n);
       });
-      // Note On for newly sounded notes
-      active.forEach(n => {
-        if (!this.activeMidiVoices.has(n)) {
-          this.triggerMidiNoteOn(n);
-        }
-      });
+      active.forEach(n => this.synth.noteOn(n));
     }
 
-    // Sort active notes by pitch
     active.sort((a, b) => a.midi - b.midi);
-
-    // Compute harmonic ratio and context
-    let ratioInfo = null;
-    if (active.length === 0) {
-      ratioInfo = {
-        notes: [],
-        ratioInts: [1],
-        ratios: [1],
-        category: 'REST',
-        title: 'SILENCE',
-        consonance: 'Rest',
-        description: 'Waiting for notes in MIDI score...',
-        colors: ['#8892b0'],
-        freqs: []
-      };
-    } else if (active.length === 1) {
-      const note = active[0];
-      ratioInfo = {
-        notes: [note.pitchClass],
-        noteFullNames: [note.name],
-        ratioInts: [1],
-        ratios: [1],
-        category: `SOLO NOTE (${note.name})`,
-        title: '1 : 1',
-        consonance: 'Pure Fundamental',
-        description: `Single voice ${note.name} (${(440 * Math.pow(2, (note.midi - 69) / 12)).toFixed(1)} Hz). Single-axis linear oscillation.`,
-        colors: [NOTE_COLORS[note.pitchClass] || '#ff5376'],
-        freqs: [midiToHz(note.midi)]
-      };
-    } else if (active.length === 2) {
-      const n1 = active[0];
-      const n2 = active[1];
-      const semitoneDiff = (n2.midi - n1.midi) % 12;
-      const intDef = INTERVALS_BY_SEMITONE[semitoneDiff] || {
-        name: 'Interval',
-        ratio: [3, 2],
-        ratioInts: [3, 2],
-        consonance: 'Harmonic Interval'
-      };
-
-      ratioInfo = {
-        notes: [n1.pitchClass, n2.pitchClass],
-        noteFullNames: [n1.name, n2.name],
-        ratioInts: [...intDef.ratioInts],
-        ratios: [1, intDef.ratio[0] / intDef.ratio[1]],
-        category: `AN INTERVAL (${intDef.name.toUpperCase()})`,
-        title: `${intDef.ratio[0]} : ${intDef.ratio[1]}`,
-        consonance: intDef.consonance,
-        description: `${n2.name} completes ${intDef.ratio[0]} cycles for every ${intDef.ratio[1]} cycles of ${n1.name}.`,
-        colors: [NOTE_COLORS[n1.pitchClass] || '#ff5376', NOTE_COLORS[n2.pitchClass] || '#ff9f43'],
-        freqs: [midiToHz(n1.midi), midiToHz(n2.midi)]
-      };
-    } else {
-      // 3 or more notes: Chord
-      const rootMidi = active[0].midi;
-      const intervalsFromRoot = active.map(n => (n.midi - rootMidi) % 12);
-      const chord = identifyChordFromIntervals(intervalsFromRoot);
-      const uniquePitchClasses = [...new Set(active.map(n => n.pitchClass))];
-
-      ratioInfo = {
-        notes: uniquePitchClasses,
-        noteFullNames: active.map(n => n.name),
-        ratioInts: [...chord.ratioInts],
-        ratios: chord.ratioInts.map(r => r / chord.ratioInts[0]),
-        category: chord.category,
-        title: chord.title,
-        consonance: chord.consonance,
-        description: chord.description,
-        colors: uniquePitchClasses.map(p => NOTE_COLORS[p] || '#ff9f43'),
-        freqs: uniquePitchClasses.map(p => midiToHz(active.find(n => n.pitchClass === p).midi))
-      };
-    }
+    const chord = chordFromMidiNotes(active);
+    const ratioInfo = { ...chord.meta, notes: chord.labels(), ratioInts: chord.ratioInts() };
 
     if (this.onMidiStateChange) {
-      this.onMidiStateChange(active, ratioInfo);
+      this.onMidiStateChange(active, ratioInfo, chord);
     }
 
-    return { type: 'midi', activeNotes: active, ratioInfo };
+    return { type: 'midi', activeNotes: active, ratioInfo, chord };
   }
 
   // Process MP3 / Audio Frame
@@ -588,6 +534,7 @@ export class MediaImporter {
 
     this.stop();
     this.midiNotes = demoNotes;
+    this.resetNoteCursor();
     this.currentMedia = {
       type: 'midi',
       name: 'Demo: Harmonic Intervals Journey',
