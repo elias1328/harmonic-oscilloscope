@@ -74,6 +74,15 @@ An interactive harmonic visualizer and synthesizer. Musical intervals, chords, M
 * **Player bar:** play/pause, stop, scrubber (seeks on release while playing), loop, speed 0.5× / 1× / 1.5× / 2× (the position is kept when the speed changes), eject. Play after the end starts over. Audio files show their own sample rate (or the context rate, labelled as such).
 * **Built-in demos:** *Harmonic Intervals Journey* (MIDI), a legato progression through the basic intervals and triads, and a synthesized stereo X-Y oscilloscope track.
 
+### 🎹 Live MIDI keyboard
+* **Connect:** plug a USB MIDI keyboard into your computer (or pair a Bluetooth MIDI keyboard with your operating system first), open the controls panel and click **🎹 MIDI Keyboard**. Allow MIDI access when the browser asks (no SysEx is requested). The status shows the device name; with several devices, a picker offers *All inputs* or one device, and the choice is remembered. Devices can be plugged in or out while the page is open; unplugging releases that keyboard's held notes. Once allowed, the app reconnects by itself next time.
+* **What you see:** the held notes go through the same chord model as everything else, so the header shows the interval or chord (e.g. play C-E-G for `4 : 5 : 6`), the on-screen piano lights up, and the 2D/3D figure and the Time Tunnel follow. Releasing every key shows the rest state.
+* **Tuning follows the toggle.** In **12-TET** the keyboard is an ordinary piano (440 Hz A). In **Just Intonation** every held chord is retuned live to pure ratios above its *lowest* note: the lowest note keeps its piano pitch and the others glide (≤ 30 ms, on the same oscillators) to their just pitches — C4-E4-G4 sounds 261.63, 327.03 and 392.44 Hz. Adding a lower note or switching the toggle while you hold a chord retunes it the same way. The figure uses exactly these frequencies: closed in Just Intonation, slowly precessing in 12-TET.
+* **Playing:** velocity sets the loudness, the current timbre (Pure Sine, Warm Tube, Soft E-Piano) is used, the sustain pedal (CC64) holds notes, and "all notes off" (CC123) is honoured. Notes sound the moment the message arrives.
+* **🔊 Keyboard sound:** turn it off to use the app as a visualizer only (for digital pianos with their own speakers). The setting is remembered.
+* **Files and the drone:** the first note you play pauses a playing MIDI or audio file and silences the manual drone, which stays off while you play. Clicking a preset or an on-screen piano key, or loading a file, leaves live-keyboard mode.
+* **Browser support:** Chrome, Edge and Firefox on desktop (Chrome on Android works too; Firefox asks once to allow MIDI for the site). Safari and iOS browsers do not support Web MIDI; the button is then disabled with a hint. Web MIDI needs a secure page: HTTPS (as on GitHub Pages) or `http://localhost`.
+
 ### 📱 Layout
 * Works from phones to large screens: on narrow screens the nav becomes icons, the controls become a bottom sheet (start closed; ⚙️ opens them) and the player bar docks above it.
 * 📸 **Snapshot** exports a PNG of the 2D or 3D view.

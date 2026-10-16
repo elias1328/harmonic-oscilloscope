@@ -1245,3 +1245,31 @@ input[type="range"]::-webkit-slider-thumb:hover {
   0%, 100% { box-shadow: 0 0 6px rgba(168, 255, 120, 0.25); }
   50% { box-shadow: 0 0 18px rgba(168, 255, 120, 0.6); }
 }
+
+/* Live MIDI keyboard */
+.midi-device {
+  width: 100%;
+  margin-top: 8px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--panel-border);
+  color: #fff;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-family: var(--font-main);
+  font-size: 12px;
+}
+
+.midi-status {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--accent-green);
+}
+
+.midi-status.error {
+  color: var(--accent-pink);
+}
+
+#btn-midi-keyboard:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

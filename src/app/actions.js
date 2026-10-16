@@ -15,7 +15,13 @@ export function createActions({ store, audio, importer, get3D }) {
       store.set({ media: null, tunnelSuggested: false });
     },
 
+    // Leave live-keyboard mode (registered by the LiveKeyboard); manual actions and files do.
+    exitLive() {
+      if (get().live && actions.onExitLive) actions.onExitLive();
+    },
+
     setChord(chord, extra = {}) {
+      actions.exitLive();
       actions.exitMedia();
       const patch = { chord, customError: '', ...extra };
       // a chord's preferred view applies, except while the Time Tunnel (3D) is on
@@ -86,6 +92,7 @@ export function createActions({ store, audio, importer, get3D }) {
 
     async loadFile(file) {
       audio.resume();
+      actions.exitLive();
       try {
         await importer.loadFile(file);
       } catch (err) {

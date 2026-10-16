@@ -12,8 +12,9 @@ import { Oscilloscope2D } from './visualizer/oscilloscope2D.js';
 import { IntervalsGrid } from './visualizer/intervalsGrid.js';
 import { MiniWaveform } from './visualizer/miniWaveform.js';
 import { Figure, rootHz } from './app/figure.js';
-import { persistenceTau } from './visualizer/phosphor2D.js';
-import { TunnelClock, buildSlice, DEFAULT_SPEED, DEFAULT_SLICES } from './visualizer/tunnelCore.js';
+import { TunnelClock, DEFAULT_SPEED, DEFAULT_SLICES } from './visualizer/tunnelCore.js';
+import { buildFrame } from './app/frame.js';
+import { initMidiKeyboard } from './ui/midiKeyboard.js';
 import { createActions } from './app/actions.js';
 import { bindAudio } from './app/audioSync.js';
 import { bindMedia } from './app/mediaBridge.js';
@@ -54,7 +55,10 @@ const store = createStore({
   tunnel: false, // Waterfall Time Tunnel (3D)
   tunnelSuggested: false,
   tunnelSpeed: DEFAULT_SPEED,
-  tunnelHistory: DEFAULT_SLICES
+  tunnelHistory: DEFAULT_SLICES,
+  live: false, // live MIDI keyboard mode
+  liveSound: true,
+  midi: { state: 'off', message: '', devices: [], device: 'all' }
 });
 
 const audio = new AudioEngine();
@@ -111,6 +115,7 @@ initCustomRatio(store, actions);
 initPlayer(store, actions, importer, bridge);
 initNav(store, actions, { grid, snapshot });
 initDropzone(actions, audio, importer);
+const live = initMidiKeyboard({ store, actions, audio });
 
 // First user gesture unlocks audio; from then on the clock follows the AudioContext, and the
 // click scheduler can place clicks on it.
@@ -153,26 +158,7 @@ function animate() {
   if (figure.sync(store.get(), t)) clicks.invalidate();
   const state = store.get();
   if (state.tab === 'lab') {
-    const xyMode = state.media && state.media.type === 'audio' && state.media.audioMode === 'xy';
-    const frame = {
-      figure, t, drawMode: state.drawMode,
-      labels: state.chord.labels(), colors: state.chord.colors(),
-      persistence: persistenceTau(state.persistence), bloom: state.bloom,
-      xyPoints: xyMode ? bridge.frame.xyPoints : null,
-      xy: xyMode && bridge.frame.xy ? bridge.frame.xy : null
-    };
-    bridge.frame.xy = null; // each X-Y segment is drawn once
-    // Time Tunnel: driven by the media clock (pause freezes, seek/eject clears), wall clock without media
-    const tunnelOn = state.tunnel && state.dimension === '3D';
-    if (tunnelOn) {
-      const tc = tunnelClock.update(state.media ? importer.currentTime : null, t);
-      const xyWindow = bridge.frame.xyPoints;
-      frame.tunnel = {
-        on: true, now: tc.now, cleared: tc.cleared || !tunnelWasOn, title: state.chord.meta.title,
-        speed: state.tunnelSpeed, history: state.tunnelHistory,
-        makeSlice: () => buildSlice({ state, figure, t, xyPoints: xyWindow })
-      };
-    }
+    const { frame, tunnelOn } = buildFrame({ state, figure, t, bridge, tunnelClock, tunnelWasOn, mediaTime: importer.currentTime });
     tunnelWasOn = tunnelOn;
     if (state.dimension === '2D') {
       visualizer2D.setSafeArea(computeSafeArea());
@@ -189,7 +175,7 @@ function animate() {
 
 // Read-only debug handle used by the e2e suite (e2e/e2e.mjs) and the jsdom tests.
 window.__harmonic = {
-  store, audio, mediaImporter: importer, visualizer2D, clock, figure, clicks, computeSafeArea, snapshotDataURL,
+  store, audio, mediaImporter: importer, visualizer2D, clock, figure, clicks, computeSafeArea, snapshotDataURL, live,
   get visualizer3D() { return visualizer3D; },
   get state() { return store.get(); }
 };

@@ -122,6 +122,22 @@
         </div>
       </div>
 
+      <!-- Live MIDI keyboard (Web MIDI) -->
+      <div class="control-group" id="midi-keyboard-group">
+        <div class="control-label">
+          <span>Live MIDI Keyboard</span>
+        </div>
+        <div class="btn-group">
+          <button class="btn-toggle" id="btn-midi-keyboard" data-state="off" title="Connect a hardware MIDI keyboard (Chrome, Edge or Firefox)">🎹 MIDI Keyboard</button>
+          <button class="btn-toggle active" id="btn-keyboard-sound" aria-pressed="true" title="Let the app sound the keyboard (turn off if your piano has its own speakers)">🔊 Keyboard sound</button>
+        </div>
+        <select id="midi-device" class="midi-device" hidden aria-label="MIDI input"></select>
+        <div class="midi-status" id="midi-status" role="status" hidden></div>
+        <div style="font-size: 11px; color: #8892b0; margin-top: 6px; line-height: 1.4;">
+          💡 Play chords on a real keyboard: the header, piano, figure and tunnel follow. In Just Intonation each chord is retuned to pure ratios above its lowest note.
+        </div>
+      </div>
+
       <!-- Interactive Clickable Piano Keyboard -->
       <div class="control-group">
         <div class="control-label">

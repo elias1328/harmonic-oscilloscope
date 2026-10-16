@@ -143,18 +143,24 @@ export function parseCustomRatio(text) {
   };
 }
 
-/** Chord of the sounding MIDI notes (played in 12-TET, so that is the tuning drawn and shown). */
-export function chordFromMidiNotes(active) {
+/**
+ * Chord of the sounding MIDI notes. A MIDI file plays in 12-TET, so that is the tuning drawn and
+ * shown. A live keyboard ({ live: true }) follows the tuning toggle instead: in just intonation the
+ * chord is retuned to pure ratios above its lowest note, which keeps its 12-TET pitch.
+ */
+export function chordFromMidiNotes(active, { live = false } = {}) {
+  const source = live ? 'live' : 'midi';
+  const tuning = live ? null : 'equal';
   const midis = [...new Set(active.map(n => n.midi))].sort((a, b) => a - b);
   if (midis.length === 0) {
-    return new Chord({ source: 'midi', tuning: 'equal', meta: { category: 'REST', title: 'SILENCE', consonance: 'Rest', description: 'Waiting for notes in MIDI score...' } });
+    return new Chord({ source, tuning, meta: { category: 'REST', title: 'SILENCE', consonance: 'Rest', description: live ? 'Play the MIDI keyboard…' : 'Waiting for notes in MIDI score...' } });
   }
   const id = identifyChord(midis);
   const voices = midis.map((m, i) => {
     const pc = NOTE_NAMES[m % 12];
     return { label: pc, key: pc, pitchClass: pc, midi: m, ji: id.voiceJi[i], semitones: m - midis[0], color: NOTE_COLORS[pc] || VOICE_PALETTE[i % 8] };
   });
-  const chord = new Chord({ rootHz: midiToHz(midis[0]), voices, source: 'midi', tuning: 'equal' });
+  const chord = new Chord({ rootHz: midiToHz(midis[0]), voices, source, tuning });
   const names = midis.map(m => `${NOTE_NAMES[m % 12]}${Math.floor(m / 12) - 1}`);
   if (id.kind === 'solo') {
     chord.meta = { category: `SOLO NOTE (${names[0]})`, title: '1 : 1', consonance: 'Pure Fundamental', description: `Single voice ${names[0]} (${midiToHz(midis[0]).toFixed(1)} Hz). Single-axis linear oscillation.` };

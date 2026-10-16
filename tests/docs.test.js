@@ -35,3 +35,12 @@ describe('G5.5: README', () => {
     }
   });
 });
+
+describe('G6.11: README — live MIDI keyboard', () => {
+  it('G6.11: documents connecting, tuning, Keyboard sound, browser support and file playback', () => {
+    for (const re of [/MIDI Keyboard/, /Allow MIDI access/i, /lowest/i, /Just Intonation/, /12-TET/, /Keyboard sound/,
+      /Chrome, Edge and Firefox/, /Safari/, /HTTPS/, /localhost/, /pauses a playing MIDI or audio file/]) {
+      expect(readme, String(re)).toMatch(re);
+    }
+  });
+});

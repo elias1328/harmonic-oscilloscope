@@ -220,8 +220,8 @@ export function chordColor(chord, ratioInts) {
 /**
  * What one slice shows:
  * - audio (X-Y): the current X-Y window, decimated;
- * - a just-intonation or MIDI chord: one exact closed period (the chord's shape);
- * - a manual chord in 12-TET: a 1/f_fund window of the real, precessing motion from now.
+ * - a just-intonation or MIDI-file chord: one exact closed period (the chord's shape);
+ * - a manual or live-keyboard chord in 12-TET: a 1/f_fund window of the real, precessing motion.
  * Colour: the chord's own hue (chordHue), dimmed for dense ratios (densityOf).
  */
 export function buildSlice({ state, figure, t, xyPoints }) {
@@ -236,7 +236,8 @@ export function buildSlice({ state, figure, t, xyPoints }) {
   // the front figure: the same hue, a little lighter, also dimmed for dense ratios
   const front = hslToRgb(chordHue(chord), 0.9, 0.56).map(c => c * (0.5 + 0.5 * density));
   const P = SLICE_POINTS;
-  if (figure.closed || chord.source !== 'manual') {
+  // a MIDI file's chord shows its closed shape; manual and live chords in 12-TET precess
+  if (figure.closed || chord.source === 'midi') {
     return { points: closedCurve(figure.ratioInts, figure.deltas, 2, P - 1).map(p => [p[0], p[1]]), color, front, density, window: figure.period };
   }
   const proj = makeProjector(figure.size, 2);

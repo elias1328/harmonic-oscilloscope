@@ -235,6 +235,23 @@ export class AudioEngine {
     return voice;
   }
 
+  // Glide a running voice to a new pitch on the same oscillators (no restart): the 3rd harmonic
+  // of the e-piano and the tube's lowpass follow. glide ≤ 30 ms keeps it click-free but quick.
+  retuneVoice(voice, freq, glide = 0.02) {
+    if (!this.ctx || !voice) return;
+    const t = this.ctx.currentTime;
+    const ramp = (param, value) => {
+      try {
+        param.cancelScheduledValues(t);
+        param.setValueAtTime(param.value, t);
+        param.linearRampToValueAtTime(value, t + glide);
+      } catch { /* param not automatable */ }
+    };
+    voice.oscs.forEach((osc, i) => ramp(osc.frequency, i === 0 ? freq : freq * 3));
+    if (voice.lowpass) ramp(voice.lowpass.frequency, Math.min(freq * 4, 8000));
+    voice.baseFreq = freq;
+  }
+
   // Fade a voice out, then stop and disconnect every node (panner included).
   releaseVoice(voice, release = VOICE_RELEASE) {
     if (!this.ctx) return;

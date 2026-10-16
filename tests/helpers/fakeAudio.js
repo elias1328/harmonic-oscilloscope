@@ -18,13 +18,13 @@ export const audioLog = {
 };
 
 export class Param {
-  constructor(v = 0) { this.value = v; this.history = []; }
-  _set(v) { this.value = v; this.history.push(v); }
-  setValueAtTime(v) { this._set(v); }
-  linearRampToValueAtTime(v) { this._set(v); }
-  exponentialRampToValueAtTime(v) { this._set(v); }
-  setTargetAtTime(v) { this._set(v); }
-  cancelScheduledValues() {}
+  constructor(v = 0) { this.value = v; this.history = []; this.calls = []; }
+  _set(v, method, time) { this.value = v; this.history.push(v); this.calls.push({ method, value: v, time }); }
+  setValueAtTime(v, t) { this._set(v, 'set', t); }
+  linearRampToValueAtTime(v, t) { this._set(v, 'linear', t); }
+  exponentialRampToValueAtTime(v, t) { this._set(v, 'exp', t); }
+  setTargetAtTime(v, t) { this._set(v, 'target', t); }
+  cancelScheduledValues(t) { this.calls.push({ method: 'cancel', time: t }); }
 }
 
 export class Node {

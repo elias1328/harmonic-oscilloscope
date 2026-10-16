@@ -13,12 +13,15 @@ export class MidiSynth {
 
   // Voices are created even while muted: the master gain mutes them, so a held note is heard
   // as soon as the user unmutes.
-  noteOn(note) {
+  // `freq` (optional) starts the voice at a given pitch, e.g. a just-intonation retuning.
+  noteOn(note, freq = midiToHz(note.midi)) {
     this.engine.init();
-    if (!this.engine.ctx || this.voices.has(note)) return;
+    if (!this.engine.ctx || this.voices.has(note)) return null;
     const level = 0.25 * (note.velocity || 0.8); // the master volume is applied once, by the engine
     const pan = Math.max(-0.8, Math.min(0.8, (note.midi - 60) / 36)); // pan by pitch
-    this.voices.set(note, this.engine.createVoice(midiToHz(note.midi), level, { pan, attack: 0.015 }));
+    const voice = this.engine.createVoice(freq, level, { pan, attack: 0.012 });
+    this.voices.set(note, voice);
+    return voice;
   }
 
   noteOff(note) {

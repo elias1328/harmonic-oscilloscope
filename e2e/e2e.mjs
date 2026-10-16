@@ -44,7 +44,8 @@ const GATES = {
   'G4.9': 'MIDI demo: slices span ≥ 50% of the depth after 5 s; median fps at 20 s ≥ 0.85 × at 2 s (tunnel on)',
   'G5.2': 'tunnel density: during the 45:32 step < 15% of the front figure box has luminance > 240',
   'G5.3': 'tunnel colour: mean chroma of lit pixels ≥ 40 at ~10 s; consecutive marker rings differ in hue by ≥ 30°',
-  'G5.4': 'Slow-mo readout during X-Y audio: real time, no root Hz claimed'
+  'G5.4': 'Slow-mo readout during X-Y audio: real time, no root Hz claimed',
+  'G6.10': 'live MIDI keyboard (fake Web MIDI): staggered C-E-G -> 4 : 5 : 6, one tunnel ring, JI pitches; unplug releases notes and updates the status'
 };
 const gates = Object.fromEntries(Object.entries(GATES).map(([id, desc]) => [id, { desc, pass: null, details: [] }]));
 const gateResult = (id, ok, detail) => {
@@ -75,6 +76,18 @@ page.on('dialog', async d => { dialogs.push(d.message()); await d.dismiss(); });
 const requests = [];
 page.on('request', r => requests.push(r.url()));
 const threeRequests = () => requests.filter(u => /\/assets\/(three|three-addons|oscilloscope3D)-[^/]*\.js/.test(u));
+
+// A fake Web MIDI keyboard (navigator.requestMIDIAccess) the test can play and unplug.
+await page.addInitScript(() => {
+  const access = { sysexEnabled: false, inputs: new Map(), outputs: new Map(), onstatechange: null };
+  const input = { id: 'fake-kb', name: 'Fake Keys 49', type: 'input', state: 'connected', connection: 'open', onmidimessage: null };
+  access.inputs.set(input.id, input);
+  window.__fakeMidi = {
+    send: (bytes) => input.onmidimessage && input.onmidimessage({ data: Uint8Array.from(bytes), target: input }),
+    unplug: () => { access.inputs.delete(input.id); input.state = 'disconnected'; if (access.onstatechange) access.onstatechange({ port: input }); }
+  };
+  Object.defineProperty(navigator, 'requestMIDIAccess', { configurable: true, value: () => Promise.resolve(access) });
+});
 
 // Web Audio instrumentation: every oscillator, its liveness (honouring scheduled stop times),
 // the node graph it feeds, and whether it is a bandpassed polyrhythm "click" oscillator.
@@ -646,6 +659,47 @@ await section('time tunnel', ['G4.3', 'G4.6', 'G4.8', 'G4.9'], async () => {
   await page.click('#btn-tuning');
   await page.click('#btn-tunnel'); await wait(300);
   await page.click('#btn-toggle-dimension').catch(() => {}); await wait(300);
+  if (await visible('#viewport-3d')) { await page.click('#btn-toggle-dimension'); await wait(300); }
+});
+
+// ---------------- Phase 6: live MIDI keyboard ----------------
+await section('live MIDI keyboard', ['G6.10'], async () => {
+  await clickPreset(0); await wait(300);
+  await page.click('#btn-midi-keyboard'); await wait(500);
+  const status1 = await txt('#midi-status');
+  gateResult('G6.10', /Fake Keys 49/.test(status1) && (await page.locator('#btn-midi-keyboard').getAttribute('data-state')) === 'connected', `connected: "${status1}"`);
+  await page.click('#btn-tunnel');
+  await page.waitForFunction(() => window.__harmonic.visualizer3D && window.__harmonic.visualizer3D.mode === 'tunnel', null, { timeout: 8000 });
+  await wait(600);
+  const m0 = await page.evaluate(() => window.__harmonic.visualizer3D.tunnel.markersCreated);
+  // staggered C4, E4, G4 within 30 ms, timed inside the page
+  await page.evaluate(() => new Promise(res => {
+    window.__fakeMidi.send([0x90, 60, 100]);
+    setTimeout(() => window.__fakeMidi.send([0x90, 64, 96]), 15);
+    setTimeout(() => { window.__fakeMidi.send([0x90, 67, 92]); res(); }, 30);
+  }));
+  await wait(900);
+  const r = await page.evaluate(() => {
+    const live = window.__harmonic.live;
+    const freqs = Object.fromEntries([...live.synth.voices.entries()].map(([n, v]) => [n.midi, v.oscs[0].frequency.value]));
+    const t = window.__harmonic.visualizer3D.tunnel;
+    return { title: document.getElementById('header-title').textContent, freqs, markers: t.markersCreated, labels: t.markerLabels.slice(-1), live: window.__harmonic.state.live };
+  });
+  const ji = [[60, 261.63], [64, 327.03], [67, 392.44]];
+  const jiOk = ji.every(([m, f]) => Math.abs((r.freqs[m] || 0) - f) < 0.05);
+  gateResult('G6.10', r.title === '4 : 5 : 6', `header after staggered C-E-G: "${r.title}"`);
+  gateResult('G6.10', r.markers - m0 === 1 && r.labels[0] === '4 : 5 : 6', `tunnel rings added: ${r.markers - m0} (${r.labels.join(', ')})`);
+  gateResult('G6.10', jiOk, `voice pitches ${ji.map(([m]) => (r.freqs[m] || 0).toFixed(2)).join(', ')} Hz (JI 261.63, 327.03, 392.44)`);
+  await shot('21-live-keyboard-tunnel-CEG');
+  // unplug: the held notes are released and the status updates
+  await page.evaluate(() => window.__fakeMidi.unplug());
+  await wait(400);
+  const u = await page.evaluate(() => ({ voices: window.__harmonic.live.synth.voices.size, held: window.__harmonic.live.held.size, title: document.getElementById('header-title').textContent }));
+  const status2 = await txt('#midi-status');
+  gateResult('G6.10', u.voices === 0 && u.held === 0 && /plug in/i.test(status2), `after unplug: ${u.voices} voices, ${u.held} held, header "${u.title}", status "${status2}"`);
+  await page.click('#btn-tunnel'); await wait(300);
+  await clickPreset(0); await wait(300); // a preset leaves live mode
+  log('G6.8 preset leaves live mode', !(await page.evaluate(() => window.__harmonic.state.live)));
   if (await visible('#viewport-3d')) { await page.click('#btn-toggle-dimension'); await wait(300); }
 });
 

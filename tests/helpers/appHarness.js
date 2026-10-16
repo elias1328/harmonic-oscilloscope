@@ -48,7 +48,12 @@ export function installCanvasStub() {
   return contexts;
 }
 
-export async function bootApp() {
+export async function bootApp({ midi = null, storage = {} } = {}) {
+  // Web MIDI: jsdom has none (an unsupported browser) unless a fake is given
+  if (midi) Object.defineProperty(navigator, 'requestMIDIAccess', { configurable: true, value: midi.requestMIDIAccess });
+  else delete navigator.requestMIDIAccess;
+  localStorage.clear();
+  Object.entries(storage).forEach(([k, v]) => localStorage.setItem(k, v));
   const html = readFileSync(join(process.cwd(), 'index.html'), 'utf8');
   const body = html.match(/<body>([\s\S]*)<\/body>/)[1].replace(/<script[\s\S]*?<\/script>/g, '');
   document.body.innerHTML = body;
@@ -91,6 +96,10 @@ export async function bootApp() {
       input.dispatchEvent(new window.Event('change', { bubbles: true }));
       // let the async loader settle
       for (let i = 0; i < 10; i++) await new Promise(r => setTimeout(r, 0));
+      app.store.flush();
+    },
+    async settle() {
+      for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 0));
       app.store.flush();
     }
   };
