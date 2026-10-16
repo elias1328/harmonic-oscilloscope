@@ -177,6 +177,7 @@ function animate() {
 window.__harmonic = {
   store, audio, mediaImporter: importer, visualizer2D, clock, figure, clicks, computeSafeArea, snapshotDataURL, live,
   get visualizer3D() { return visualizer3D; },
+  get loading3D() { return loading3D; },
   get state() { return store.get(); }
 };
 

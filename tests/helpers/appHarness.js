@@ -100,6 +100,8 @@ export async function bootApp({ midi = null, storage = {} } = {}) {
     },
     async settle() {
       for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 0));
+      // the lazy 3D import can take longer than a few ticks on a slow runner (CI): wait for it
+      if (app.loading3D) await app.loading3D;
       app.store.flush();
     }
   };
