@@ -25,6 +25,45 @@ export function sliceAlpha(age, history) {
   return Math.pow(1 - age / history, 1.6);
 }
 
+/** A chord must sound this long (tunnel seconds) before it earns a marker ring. */
+export const MARKER_SETTLE = 0.15;
+const REST_TITLE = 'SILENCE';
+
+/**
+ * Decides when a chord change deserves a marker ring. Real note switches pass through brief
+ * states (note-off before note-on, staggered attacks C → C+E → C+E+G): those still shape the
+ * slices, but only a chord that holds for MARKER_SETTLE gets a ring, placed where it began.
+ * Rests never get a ring and do not count as a change (C+G, rest, C+G adds nothing).
+ */
+export class ChordMarkerFilter {
+  constructor(settle = MARKER_SETTLE) {
+    this.settle = settle;
+    this.reset();
+  }
+
+  reset() {
+    this.committed = null; // title of the last ringed (or initial) chord
+    this.candidate = null;
+    this.since = 0;
+  }
+
+  /** Feed the current title each frame; returns { title, birth } when a ring should be added. */
+  observe(title, now) {
+    if (title !== this.candidate) {
+      this.candidate = title;
+      this.since = now;
+    }
+    if (title === REST_TITLE || title === this.committed) return null;
+    if (this.committed === null) {
+      this.committed = title; // the first chord after a start or seek is silent
+      return null;
+    }
+    if (now - this.since + 1e-9 < this.settle) return null;
+    this.committed = title;
+    return { title, birth: this.since };
+  }
+}
+
 /**
  * Ring of `capacity` slices of SLICE_POINTS vertices each, in flat typed arrays that map 1:1 onto
  * the GPU attributes (position xyz, birthTime, colour rgb). Pushing writes one slot in place.

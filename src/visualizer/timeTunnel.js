@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
-import { SliceRing, sliceZ, sliceAlpha, SLICE_POINTS, CAPTURE_HZ, MAX_SLICES, DEFAULT_SPEED } from './tunnelCore.js';
+import { SliceRing, sliceZ, sliceAlpha, SLICE_POINTS, CAPTURE_HZ, MAX_SLICES, DEFAULT_SPEED, ChordMarkerFilter } from './tunnelCore.js';
 
 const VERT = /* glsl */ `
   uniform float uNow;
@@ -76,6 +76,7 @@ export class TimeTunnel {
     this.speed = DEFAULT_SPEED;
     this.lastCapture = -Infinity;
     this.lastTitle = null;
+    this.markerFilter = new ChordMarkerFilter();
     this.now = 0;
     this.markers = [];
     this.markersCreated = 0;
@@ -172,6 +173,7 @@ export class TimeTunnel {
 
   clear() {
     this.lastCapture = -Infinity;
+    this.markerFilter.reset();
     this.markers.forEach(m => this.removeMarker(m));
     this.markers = [];
     this.front.visible = false;
@@ -260,10 +262,13 @@ export class TimeTunnel {
         this.front.visible = true;
       }
     }
-    // a chord change leaves a labelled ring at the depth where it happened
-    if (titleChanged) {
-      this.addMarker(tun.title, captured ? new THREE.Color(...(captured.front || captured.color)) : 0xffffff, now);
-      this.lastTitle = tun.title;
+    if (titleChanged) this.lastTitle = tun.title;
+    // a chord that holds leaves a labelled ring at the depth where it began (brief note-switch
+    // states and rests do not; see ChordMarkerFilter)
+    const mark = this.markerFilter.observe(tun.title, now);
+    if (mark) {
+      const color = captured ? new THREE.Color(...(captured.front || captured.color)) : this.frontMat.color.clone();
+      this.addMarker(mark.title, color, mark.birth);
     }
 
     const H = this.historySeconds;

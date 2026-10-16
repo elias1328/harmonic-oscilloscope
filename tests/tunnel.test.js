@@ -1,7 +1,7 @@
 // Phase 4: Waterfall Time Tunnel — pure core (ring buffer, depth/fade mapping, slices, clock).
 import { describe, it, expect } from 'vitest';
 import {
-  SliceRing, sliceZ, sliceAlpha, TunnelClock, buildSlice, decimate, SLICE_POINTS, CAPTURE_HZ, chordHue, densityOf, rgbHue
+  SliceRing, sliceZ, sliceAlpha, TunnelClock, buildSlice, decimate, SLICE_POINTS, CAPTURE_HZ, chordHue, densityOf, rgbHue, ChordMarkerFilter
 } from '../src/visualizer/tunnelCore.js';
 import { Figure } from '../src/app/figure.js';
 import { presetChord, parseCustomRatio, chordFromMidiNotes } from '../src/core/voices.js';
@@ -177,5 +177,55 @@ describe('G4.7: slice content', () => {
 
   it(`captures at ${CAPTURE_HZ} Hz`, () => {
     expect(CAPTURE_HZ).toBe(30);
+  });
+});
+
+describe('chord-change markers are debounced (no ring spam on note switches)', () => {
+  // feed a title timeline [title, fromTime] at 60 fps until `end`; collect committed markers
+  const run = (timeline, end, f = new ChordMarkerFilter()) => {
+    const out = [];
+    for (let now = 0; now <= end + 1e-9; now += 1 / 60) {
+      let title = timeline[0][0];
+      for (const [t, from] of timeline) if (now >= from - 1e-9) title = t;
+      const m = f.observe(title, now);
+      if (m) out.push(m);
+    }
+    return out;
+  };
+
+  it('staggered attacks (C, then C+E, then C+E+G within 30 ms) leave exactly one ring, placed where the chord began', () => {
+    const marks = run([['3 : 2', 0], ['C', 1.0], ['5 : 4', 1.01], ['4 : 5 : 6', 1.03]], 3);
+    expect(marks.map(m => m.title)).toEqual(['4 : 5 : 6']);
+    expect(marks[0].birth).toBeGreaterThanOrEqual(1.03 - 1 / 60);
+    expect(marks[0].birth).toBeLessThanOrEqual(1.03 + 1 / 60);
+  });
+
+  it('a brief gap (note-off before note-on) back to the same chord leaves no ring', () => {
+    expect(run([['3 : 2', 0], ['SILENCE', 1.0], ['3 : 2', 1.02]], 3)).toEqual([]);
+  });
+
+  it('a rest never gets a ring, even a long one, and returning to the same chord adds none', () => {
+    expect(run([['3 : 2', 0], ['SILENCE', 1.0], ['3 : 2', 2.5]], 4)).toEqual([]);
+  });
+
+  it('rapid flicker between two chords leaves no ring until one of them holds', () => {
+    const tl = [['3 : 2', 0]];
+    for (let i = 0; i < 10; i++) tl.push([i % 2 ? '3 : 2' : '5 : 4', 1 + i * 0.05]);
+    tl.push(['5 : 4', 1.5]);
+    const marks = run(tl, 3);
+    expect(marks.map(m => m.title)).toEqual(['5 : 4']);
+    expect(marks[0].birth).toBeCloseTo(1.5, 1);
+  });
+
+  it('every real chord change that holds still gets its own ring', () => {
+    const marks = run([['3 : 2', 0], ['5 : 4', 1], ['4 : 3', 2], ['2 : 1', 3]], 4);
+    expect(marks.map(m => m.title)).toEqual(['5 : 4', '4 : 3', '2 : 1']);
+  });
+
+  it('reset() forgets the committed chord (after a seek the first chord is silent again)', () => {
+    const f = new ChordMarkerFilter();
+    run([['3 : 2', 0], ['5 : 4', 1]], 2, f);
+    f.reset();
+    expect(run([['4 : 3', 0]], 1, f)).toEqual([]);
   });
 });
